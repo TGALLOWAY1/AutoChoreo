@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AutoChoreo MVP</title>
+    <title>AutoChoreo</title>
     <script type="importmap">
     {
         "imports": {
@@ -27,6 +27,8 @@
             color: #ffffff;
         }
 
+        /* ── Top bar ─────────────────────────────────────────── */
+
         #uiBar {
             position: fixed;
             top: 0;
@@ -37,16 +39,35 @@
             backdrop-filter: blur(10px);
             display: flex;
             align-items: center;
-            gap: 20px;
-            padding: 0 20px;
+            gap: 12px;
+            padding: 0 16px;
             z-index: 1000;
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
             pointer-events: none;
+            overflow-x: auto;
+            overflow-y: hidden;
         }
 
-        #playPauseButton {
-            padding: 10px 20px;
-            font-size: 16px;
+        .app-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.7);
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+
+        .separator {
+            width: 1px;
+            height: 28px;
+            background: rgba(255, 255, 255, 0.15);
+            flex-shrink: 0;
+        }
+
+        /* ── Buttons & inputs in bar ─────────────────────────── */
+
+        .bar-btn {
+            padding: 8px 14px;
+            font-size: 13px;
             font-weight: 600;
             background: rgba(255, 255, 255, 0.1);
             border: 1px solid rgba(255, 255, 255, 0.2);
@@ -55,84 +76,167 @@
             cursor: pointer;
             transition: all 0.2s ease;
             pointer-events: auto;
+            white-space: nowrap;
         }
 
-        #playPauseButton:hover {
+        .bar-btn:hover {
             background: rgba(255, 255, 255, 0.2);
             border-color: rgba(255, 255, 255, 0.3);
         }
 
-        #playPauseButton:active {
+        .bar-btn:active {
             transform: scale(0.98);
         }
 
-        .speed-control {
+        .bar-select {
+            padding: 7px 10px;
+            font-size: 13px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #ffffff;
+            cursor: pointer;
+            pointer-events: auto;
+            max-width: 180px;
+        }
+
+        .bar-select option {
+            background: #1a1a2e;
+            color: #ffffff;
+        }
+
+        /* ── Slider groups ───────────────────────────────────── */
+
+        .slider-group {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
+            pointer-events: auto;
         }
 
-        .speed-control label {
-            font-size: 14px;
-            color: rgba(255, 255, 255, 0.8);
+        .slider-group label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            white-space: nowrap;
         }
 
-        #speedSlider {
-            width: 150px;
+        .slider-group input[type="range"] {
+            width: 100px;
             height: 6px;
             border-radius: 3px;
             background: rgba(255, 255, 255, 0.2);
             outline: none;
             -webkit-appearance: none;
             appearance: none;
-            pointer-events: auto;
         }
 
-        #speedSlider::-webkit-slider-thumb {
+        .slider-group input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
             appearance: none;
-            width: 16px;
-            height: 16px;
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
             background: #ffffff;
             cursor: pointer;
-            transition: all 0.2s ease;
         }
 
-        #speedSlider::-webkit-slider-thumb:hover {
-            transform: scale(1.2);
-            box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-        }
-
-        #speedSlider::-moz-range-thumb {
-            width: 16px;
-            height: 16px;
+        .slider-group input[type="range"]::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
             border-radius: 50%;
             background: #ffffff;
             cursor: pointer;
             border: none;
-            transition: all 0.2s ease;
         }
 
-        #speedSlider::-moz-range-thumb:hover {
-            transform: scale(1.2);
-            box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-        }
-
-        #speedValue {
-            font-size: 14px;
+        .slider-group .value-label {
+            font-size: 12px;
             color: rgba(255, 255, 255, 0.9);
-            min-width: 40px;
+            min-width: 35px;
             text-align: right;
         }
 
-        .app-title {
-            font-size: 14px;
-            font-weight: 500;
-            color: rgba(255, 255, 255, 0.7);
-            margin-right: auto;
-            letter-spacing: 0.5px;
+        /* ── Track name / status ─────────────────────────────── */
+
+        #trackName {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 200px;
+            margin-left: auto;
         }
+
+        /* ── Hidden file inputs ──────────────────────────────── */
+
+        .hidden-input {
+            display: none;
+        }
+
+        /* ── Bottom timeline bar ─────────────────────────────── */
+
+        #timelineBar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 48px;
+            background: rgba(0, 0, 0, 0.35);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 20px;
+            z-index: 1000;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #timeDisplay {
+            font-size: 12px;
+            font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+            color: rgba(255, 255, 255, 0.7);
+            min-width: 100px;
+            text-align: center;
+            user-select: none;
+        }
+
+        #scrubber {
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.15);
+            outline: none;
+            -webkit-appearance: none;
+            appearance: none;
+            cursor: pointer;
+        }
+
+        #scrubber::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #00d9ff;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+
+        #scrubber::-webkit-slider-thumb:hover {
+            transform: scale(1.3);
+        }
+
+        #scrubber::-moz-range-thumb {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #00d9ff;
+            cursor: pointer;
+            border: none;
+        }
+
+        /* ── Canvas ──────────────────────────────────────────── */
 
         canvas {
             display: block;
@@ -140,17 +244,58 @@
     </style>
 </head>
 <body>
+    <!-- Hidden file inputs -->
+    <input type="file" id="audioFileInput" class="hidden-input" accept="audio/*">
+    <input type="file" id="fbxFileInput" class="hidden-input" accept=".fbx">
+
+    <!-- Top control bar -->
     <div id="uiBar">
-        <div class="app-title">AutoChoreo — MVP</div>
-        <button id="playPauseButton">Play</button>
-        <div class="speed-control">
-            <label for="speedSlider">Speed:</label>
+        <div class="app-title">AutoChoreo</div>
+
+        <div class="separator"></div>
+
+        <button id="playPauseButton" class="bar-btn">Play</button>
+
+        <div class="separator"></div>
+
+        <div class="slider-group">
+            <label for="speedSlider">Speed</label>
             <input type="range" id="speedSlider" min="0.25" max="2" step="0.05" value="1">
-            <span id="speedValue">1.0x</span>
+            <span class="value-label" id="speedValue">1.0x</span>
         </div>
+
+        <div class="separator"></div>
+
+        <div class="slider-group">
+            <label for="distanceSlider">Dist</label>
+            <input type="range" id="distanceSlider" min="1" max="10" step="0.1" value="5">
+            <span class="value-label" id="distanceValue">50%</span>
+        </div>
+
+        <div class="separator"></div>
+
+        <select id="fbxPresetSelect" class="bar-select">
+            <option value="">-- Preset dances --</option>
+            <option value="./TEST_DATA/DancingMedium_mixamo.fbx">Dancing Medium</option>
+            <option value="./TEST_DATA/DancingwithDrink_mixamo.fbx">Dancing with Drink</option>
+            <option value="./TEST_DATA/DoTheRobot_mixamo.fbx">Do The Robot</option>
+            <option value="./TEST_DATA/DoTheTwist_mixamo.fbx">Do The Twist</option>
+            <option value="./TEST_DATA/GentleSwayingDancing_mixamo.fbx">Gentle Swaying</option>
+            <option value="./TEST_DATA/NPC_DancingParty_mixamo.fbx">NPC Dancing Party</option>
+        </select>
+
+        <button id="loadFbxButton" class="bar-btn">Load FBX</button>
+        <button id="loadAudioButton" class="bar-btn">Load Audio</button>
+
+        <span id="trackName"></span>
+    </div>
+
+    <!-- Bottom timeline / scrubber bar -->
+    <div id="timelineBar">
+        <span id="timeDisplay">0:00 / 0:00</span>
+        <input type="range" id="scrubber" min="0" max="1" step="0.001" value="0">
     </div>
 
     <script type="module" src="main.js"></script>
 </body>
 </html>
-
