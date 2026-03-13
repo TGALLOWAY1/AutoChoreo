@@ -236,6 +236,45 @@
             border: none;
         }
 
+        /* ── Bones toggle ───────────────────────────────────── */
+
+        .bones-toggle {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            pointer-events: auto;
+            cursor: pointer;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            white-space: nowrap;
+            user-select: none;
+        }
+
+        .bones-toggle input[type="checkbox"] {
+            accent-color: #00d9ff;
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+        }
+
+        /* ── Loading overlay ────────────────────────────────── */
+
+        #loadingOverlay {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 12px;
+            padding: 20px 32px;
+            color: #00d9ff;
+            font-size: 14px;
+            z-index: 2000;
+        }
+
         /* ── Canvas ──────────────────────────────────────────── */
 
         canvas {
@@ -247,6 +286,7 @@
     <!-- Hidden file inputs -->
     <input type="file" id="audioFileInput" class="hidden-input" accept="audio/*">
     <input type="file" id="fbxFileInput" class="hidden-input" accept=".fbx">
+    <input type="file" id="glbFileInput" class="hidden-input" accept=".glb,.gltf,.fbx">
 
     <!-- Top control bar -->
     <div id="uiBar">
@@ -284,8 +324,24 @@
             <option value="./TEST_DATA/NPC_DancingParty_mixamo.fbx">NPC Dancing Party</option>
         </select>
 
+        <div class="separator"></div>
+
+        <select id="riggingSelect" class="bar-select">
+            <option value="skeleton">Skeleton Only</option>
+            <option value="default">Default Character</option>
+            <option value="xbot">X-Bot (Mixamo)</option>
+            <option value="custom">Load GLB...</option>
+        </select>
+
+        <div class="separator"></div>
+
         <button id="loadFbxButton" class="bar-btn">Load FBX</button>
         <button id="loadAudioButton" class="bar-btn">Load Audio</button>
+
+        <label class="bones-toggle">
+            <input type="checkbox" id="skeletonToggle" checked>
+            <span>Bones</span>
+        </label>
 
         <span id="trackName"></span>
     </div>
@@ -295,6 +351,9 @@
         <span id="timeDisplay">0:00 / 0:00</span>
         <input type="range" id="scrubber" min="0" max="1" step="0.001" value="0">
     </div>
+
+    <!-- Loading overlay -->
+    <div id="loadingOverlay">Loading rigging...</div>
 
     <script type="module" src="main.js"></script>
 </body>
