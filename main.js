@@ -196,8 +196,19 @@ function beginNewDance(name) {
     transport.seek(0);
 }
 
+// A video analysis still in flight must not overwrite a dance chosen after it
+// started. Called whenever another dance is selected.
+function supersedeVideoJob() {
+    if (!videoJob) return;
+    videoJob.superseded = true;
+    videoJob.abort();
+    videoJob = null;
+    hideLoading(); // drop its progress message; the new dance shows its own
+}
+
 // ── Load a dance FBX from URL ───────────────────────────────────────
 function loadDanceFromUrl(url) {
+    supersedeVideoJob();
     teardownDisplay();
     showLoading('Loading dance...');
 
@@ -217,6 +228,7 @@ function loadDanceFromUrl(url) {
 
 // ── Load a dance FBX from a File object ─────────────────────────────
 function loadDanceFromFile(file) {
+    supersedeVideoJob();
     teardownDisplay();
 
     const reader = new FileReader();
@@ -272,20 +284,29 @@ async function setChoreography(choreo) {
 // ── Load a dance from a video: landmarks → joint rotations → choreography ──
 async function loadDanceFromVideo(file) {
     if (videoJob) return;
-    videoJob = new AbortController();
+    const job = new AbortController();
+    videoJob = job;
+    // Stop if cancelled (Esc) or superseded by another dance while we were waiting
+    const checkCurrent = () => {
+        if (job.signal.aborted) throw new DOMException('Video analysis cancelled', 'AbortError');
+    };
     transport.pause();
     try {
         showLoading('Loading pose model… (Esc to cancel)');
         const capture = await extractPoseFromVideo(file, {
-            signal: videoJob.signal,
+            signal: job.signal,
             onProgress: ({ stage, fraction }) => {
+                if (job.signal.aborted) return;
                 showLoading(`${stage}… ${Math.round(fraction * 100)}% (Esc to cancel)`);
             },
         });
+        checkCurrent();
         showLoading('Solving joint rotations…');
         await new Promise((resolve) => setTimeout(resolve, 0)); // let the message paint
+        checkCurrent();
         const choreo = solveChoreography(capture);
         await setChoreography(choreo);
+        checkCurrent();
         setVideoReference({ url: URL.createObjectURL(file), capture });
 
         // Use the video's own soundtrack when it has one
@@ -294,6 +315,14 @@ async function loadDanceFromVideo(file) {
             audioFromVideo = true;
         } catch (_) {
             // Silent video (or undecodable audio): keep whatever audio is already loaded
+        }
+        if (job.signal.aborted) {
+            // Another dance was chosen while the soundtrack decoded: it must not keep this audio
+            if (audioFromVideo) {
+                transport.clearAudio();
+                audioFromVideo = false;
+            }
+            checkCurrent();
         }
         transport.seek(0);
         transport.play();
@@ -306,19 +335,21 @@ async function loadDanceFromVideo(file) {
         }
     } catch (err) {
         if (err.name === 'AbortError') {
-            hideLoading();
+            // When superseded, the overlay now belongs to the dance that replaced this one
+            if (!job.superseded) hideLoading();
         } else {
             console.error('Error analysing video:', err);
             showMessage(`Could not learn a dance from this video: ${err.message}`);
         }
-        if (!transport.hasAnimation && danceModel) applyCurrentRigging();
+        if (!job.superseded && !transport.hasAnimation && danceModel) applyCurrentRigging();
     } finally {
-        videoJob = null;
+        if (videoJob === job) videoJob = null;
     }
 }
 
 // ── Load a saved choreography (.json) ───────────────────────────────
 async function loadChoreographyFromFile(file) {
+    supersedeVideoJob();
     try {
         const choreo = Choreography.fromJSON(await file.text());
         await setChoreography(choreo);
