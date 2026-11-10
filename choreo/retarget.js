@@ -204,7 +204,10 @@ function clipFrameRate(clip) {
     }
     if (!times || times.length < 3) return 0;
     const fps = (times.length - 1) / (times[times.length - 1] - times[0]);
-    return fps >= 5 && fps <= 240 ? Math.round(fps * 1000) / 1000 : 0;
+    if (!(fps >= 5 && fps <= 240)) return 0;
+    // Whole-number rates are the norm; absorb rounding in the keyframe times
+    const whole = Math.round(fps);
+    return Math.abs(fps - whole) / whole < 0.005 ? whole : Math.round(fps * 1000) / 1000;
 }
 
 /**

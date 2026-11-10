@@ -2,14 +2,59 @@
 
 ## Current State
 
-The MVP is a static web app (index.html + main.js, ~310 lines) that:
-- Loads a single Mixamo FBX dance animation via Three.js FBXLoader
-- Renders the skeleton with a neon cyan SkeletonHelper
-- Provides Play/Pause and Speed (0.25x–2x) controls
-- Uses OrbitControls for camera interaction
-- Has no audio, no beat detection, no music sync, no file picker
+A static web app (index.html + ES modules, no build step) that:
+- Loads dances from Mixamo FBX mocap, from a video of a dancer, or from a saved
+  choreography file
+- Performs them on the mocap skeleton, its mesh, X-Bot, or a custom GLB/FBX rig
+- Plays audio in sync (Phase 1 below: transport, scrubber, speed, file pickers)
+- Has no beat detection or music-driven sync yet (Phases 2–3)
 
-All dependencies come from CDN (Three.js 0.160.0). No build system, no tests.
+All dependencies come from CDN (Three.js 0.160.0, MediaPipe Tasks Vision). No build system, no tests.
+
+---
+
+## Generative Choreography Track — learning dances from video
+
+Goal: learn a dance from a (real or AI-generated) video, store it as reusable
+motion data, and perform it on any character. The key decision is to separate
+**what the dance is** from **who is dancing it**.
+
+```
+video ──► pose landmarks ──► kinematic solve ──► Choreography ──► retarget ──► any rig
+          poseExtractor.js    solver.js          choreography.js   retarget.js
+mocap FBX ───────────────────────────────────────────▲ (choreographyFromClip)
+```
+
+| Module | Role |
+|--------|------|
+| `choreo/skeleton.js` | Canonical, character-independent skeleton (17 joints, T-pose rest, Y-up, faces +Z) |
+| `choreo/choreography.js` | The reusable dance: per-joint rotations, root trajectory in hip-heights, foot contacts, beat slots; JSON save/load |
+| `choreo/poseExtractor.js` | MediaPipe Pose Landmarker over every video frame, in the browser (33 landmarks, image + estimated 3D) |
+| `choreo/solver.js` | Landmarks → joint rotations: per-frame geometric IK, twist from elbow/knee bend planes, left/right-flip rejection, temporal smoothing, root + contact estimation |
+| `choreo/retarget.js` | Choreography → `AnimationClip` for a specific rig, and mocap clip → Choreography |
+
+### Status
+
+- [x] **Video-to-skeleton proof of concept** — *Load Dance* accepts a video; the
+      source plays in a reference panel with tracked landmarks, in sync with the character
+- [x] Reusable choreography format with *Save Choreo* / load `.json`
+- [x] Character switching without reprocessing (choreography is baked per rig)
+- [ ] Optimisation pass: joint limits, foot-contact constraints (no sliding), balance
+- [ ] Jumps (root height currently assumes the lowest foot is on the floor)
+- [ ] Editing: mirror, loop, blend, BPM re-timing (ties into Phase 3 below)
+- [ ] Movement vocabulary: segment choreographies into reusable, tagged primitives
+- [ ] Video generation (Veo) → evaluate → reconstruct → store workflow
+- [ ] More character types (robot with joint limits, geometric, procedural)
+
+### Measured baseline
+
+A Mixamo mocap dance was rendered on a human-looking character with a fixed
+camera, run through the full video pipeline, and compared with the original
+mocap (8 s, 240 frames): mean bone-direction error ≈ 17°, heading and sideways /
+depth travel track the original. Limbs are the weak point (depth is guessed from
+one camera), hands the weakest. Feeding the solver perfect landmarks gives ≈ 2°,
+so the remaining error is pose-estimation quality, not the solve — a stronger
+motion-reconstruction model can replace `poseExtractor.js` without touching the rest.
 
 ---
 

@@ -24,10 +24,10 @@ export const DEFAULT_SOLVER_OPTIONS = {
     rootSmoothing: 0.08,
     /**
      * Estimate movement toward/away from the camera from the dancer's apparent
-     * size. Off by default: it is the noisiest quantity a single camera gives.
+     * size. Assumes a fixed, non-zooming camera; turn off if the footage zooms.
      */
-    estimateDepth: false,
-    /** Assumed vertical field of view (degrees), only used when estimateDepth is on. */
+    estimateDepth: true,
+    /** Assumed vertical field of view (degrees) of the camera, used by estimateDepth. */
     cameraFovY: 50,
     /** Share (0–1) of the wrist's roll carried by the forearm (pronation/supination). */
     forearmTwistShare: 0.5,
