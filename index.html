@@ -39,8 +39,8 @@
             backdrop-filter: blur(10px);
             display: flex;
             align-items: center;
-            gap: 12px;
-            padding: 0 16px;
+            gap: 10px;
+            padding: 0 12px;
             z-index: 1000;
             border-bottom: 1px solid rgba(255, 255, 255, 0.1);
             pointer-events: none;
@@ -66,7 +66,7 @@
         /* ── Buttons & inputs in bar ─────────────────────────── */
 
         .bar-btn {
-            padding: 8px 14px;
+            padding: 8px 10px;
             font-size: 13px;
             font-weight: 600;
             background: rgba(255, 255, 255, 0.1);
@@ -121,7 +121,7 @@
         }
 
         .slider-group input[type="range"] {
-            width: 100px;
+            width: 72px;
             height: 6px;
             border-radius: 3px;
             background: rgba(255, 255, 255, 0.2);
@@ -275,6 +275,56 @@
             z-index: 2000;
         }
 
+        #loadingOverlay {
+            max-width: min(480px, 80vw);
+            text-align: center;
+            line-height: 1.4;
+        }
+
+        /* ── Reference video panel ──────────────────────────── */
+
+        #videoPanel {
+            display: none;
+            position: fixed;
+            left: 16px;
+            bottom: 64px;
+            width: min(260px, 32vw);
+            border: 1px solid rgba(0, 217, 255, 0.3);
+            border-radius: 8px;
+            overflow: hidden;
+            background: #000;
+            z-index: 900;
+            line-height: 0;
+        }
+
+        #videoPanel video {
+            width: 100%;
+            height: auto;
+            max-height: 50vh;
+            object-fit: contain;
+        }
+
+        #videoPanel canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            pointer-events: none;
+        }
+
+        #videoPanel .panel-label {
+            position: absolute;
+            top: 6px;
+            left: 8px;
+            font-size: 10px;
+            line-height: 1;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.75);
+            text-shadow: 0 0 4px #000;
+        }
+
         /* ── Canvas ──────────────────────────────────────────── */
 
         canvas {
@@ -285,7 +335,7 @@
 <body>
     <!-- Hidden file inputs -->
     <input type="file" id="audioFileInput" class="hidden-input" accept="audio/*">
-    <input type="file" id="fbxFileInput" class="hidden-input" accept=".fbx">
+    <input type="file" id="fbxFileInput" class="hidden-input" accept=".fbx,.json,video/*">
     <input type="file" id="glbFileInput" class="hidden-input" accept=".glb,.gltf,.fbx">
 
     <!-- Top control bar -->
@@ -335,8 +385,9 @@
 
         <div class="separator"></div>
 
-        <button id="loadFbxButton" class="bar-btn">Load FBX</button>
+        <button id="loadFbxButton" class="bar-btn" title="Load a dance: a mocap FBX, a video of a dancer, or a saved choreography (.json)">Load Dance</button>
         <button id="loadAudioButton" class="bar-btn">Load Audio</button>
+        <button id="saveChoreoButton" class="bar-btn" title="Save the current dance as a character-independent choreography file">Save Choreo</button>
 
         <label class="bones-toggle">
             <input type="checkbox" id="skeletonToggle" checked>
@@ -350,6 +401,13 @@
     <div id="timelineBar">
         <span id="timeDisplay">0:00 / 0:00</span>
         <input type="range" id="scrubber" min="0" max="1" step="0.001" value="0">
+    </div>
+
+    <!-- Reference video (shown while the current dance was learned from a video) -->
+    <div id="videoPanel">
+        <video id="refVideo" muted playsinline></video>
+        <canvas id="refOverlay"></canvas>
+        <span class="panel-label">Reference</span>
     </div>
 
     <!-- Loading overlay -->

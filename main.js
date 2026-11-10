@@ -1,4 +1,6 @@
-// AutoChoreo — Main Module (Phase 1 + Rigging Selection)
+// AutoChoreo — Main Module
+// Dances come from mocap (FBX), from a video (pose estimation → choreography),
+// or from a saved choreography file, and can be performed by any loaded rig.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -6,6 +8,11 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { TransportController } from './sync.js';
+import { Choreography } from './choreo/choreography.js';
+import { prepareRig, bakeClip, choreographyFromClip } from './choreo/retarget.js';
+import { solveChoreography } from './choreo/solver.js';
+import { extractPoseFromVideo } from './choreo/poseExtractor.js';
+import { LANDMARK_BONES, LANDMARK_COUNT } from './choreo/skeleton.js';
 
 // ── Default FBX to load on startup ──────────────────────────────────
 const DEFAULT_FBX = './TEST_DATA/DancingMedium_mixamo.fbx';
@@ -31,6 +38,10 @@ const fbxPresetSelect  = document.getElementById('fbxPresetSelect');
 const riggingSelect    = document.getElementById('riggingSelect');
 const skeletonToggle   = document.getElementById('skeletonToggle');
 const loadFbxButton    = document.getElementById('loadFbxButton');
+const saveChoreoButton = document.getElementById('saveChoreoButton');
+const videoPanel       = document.getElementById('videoPanel');
+const refVideo         = document.getElementById('refVideo');
+const refOverlay       = document.getElementById('refOverlay');
 const loadAudioButton  = document.getElementById('loadAudioButton');
 const audioFileInput   = document.getElementById('audioFileInput');
 const fbxFileInput     = document.getElementById('fbxFileInput');
@@ -80,7 +91,13 @@ let modelCenter = new THREE.Vector3(0, 0, 0);
 let currentDistance = 5;
 
 let danceModel = null;       // FBX model from loaded dance (contains bones, maybe mesh)
-let currentClip = null;      // AnimationClip extracted from current dance
+let currentClip = null;      // Native AnimationClip of the current dance (mocap dances)
+let currentChoreo = null;    // Character-independent Choreography (video / imported dances)
+let mocapChoreo = null;      // Choreography derived from the current mocap clip (built on demand)
+let currentDanceName = 'dance';
+let videoReference = null;   // { url, capture } while the current dance came from a video
+let audioFromVideo = false;  // The loaded audio is the soundtrack of a dance video
+let videoJob = null;         // AbortController while a video is being analysed
 let riggingMode = 'skeleton'; // 'skeleton' | 'default' | preset key | 'custom'
 let showSkeleton = true;     // Skeleton overlay visibility
 
@@ -89,12 +106,94 @@ const fbxLoader = new FBXLoader();
 const gltfLoader = new GLTFLoader();
 
 // ── Loading overlay helpers ─────────────────────────────────────────
+let messageTimer = null;
 function showLoading(msg) {
+    clearTimeout(messageTimer);
     loadingOverlay.textContent = msg || 'Loading...';
     loadingOverlay.style.display = 'block';
 }
 function hideLoading() {
+    clearTimeout(messageTimer);
     loadingOverlay.style.display = 'none';
+}
+// Show a message that dismisses itself
+function showMessage(msg, ms = 5000) {
+    showLoading(msg);
+    messageTimer = setTimeout(hideLoading, ms);
+}
+
+function fileBaseName(name) {
+    return String(name || 'dance').split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+}
+
+// ── Current dance → clip for a specific model ───────────────────────
+function hasDance() {
+    return currentChoreo !== null || currentClip !== null;
+}
+
+// A mocap dance plays its native clip. A choreography is character-independent,
+// so it is baked for whichever rig is about to perform it.
+function clipForModel(targetModel) {
+    if (currentChoreo) return bakeClip(currentChoreo, targetModel);
+    // A mocap clip carries the bone lengths of the body it was recorded on, which
+    // distorts any other character. For other rigs, go through the choreography.
+    if (targetModel !== danceModel) {
+        try {
+            return bakeClip(getMocapChoreography(), targetModel);
+        } catch (err) {
+            console.warn('Retargeting unavailable, playing the raw clip:', err.message);
+        }
+    }
+    return currentClip;
+}
+
+function getMocapChoreography() {
+    if (!mocapChoreo) {
+        if (!currentClip || !danceModel) throw new Error('Load a dance first.');
+        mocapChoreo = choreographyFromClip(currentClip, danceModel, { name: currentDanceName });
+    }
+    return mocapChoreo;
+}
+
+// Bounding box of a model's skeleton in world space. Skinned meshes report
+// unreliable bounds (their geometry lives in bind space), bones do not.
+function modelBounds(targetModel) {
+    targetModel.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    const p = new THREE.Vector3();
+    targetModel.traverse((child) => {
+        if (child.isBone) box.expandByPoint(child.getWorldPosition(p));
+    });
+    if (box.isEmpty()) box.setFromObject(targetModel);
+    return box;
+}
+
+function startAnimation(targetModel) {
+    if (!hasDance()) return;
+    let clip;
+    try {
+        clip = clipForModel(targetModel);
+    } catch (err) {
+        console.error(err);
+        showMessage(err.message);
+        return;
+    }
+    const mixer = new THREE.AnimationMixer(targetModel);
+    const action = mixer.clipAction(clip);
+    action.play();
+    transport.setAnimation(mixer, action, clip.duration);
+    transport.play();
+}
+
+// Called whenever a different dance (from any source) becomes current
+function beginNewDance(name) {
+    currentDanceName = name || 'dance';
+    setVideoReference(null);
+    if (audioFromVideo) {
+        transport.clearAudio();
+        audioFromVideo = false;
+    }
+    transport.seek(0);
 }
 
 // ── Load a dance FBX from URL ───────────────────────────────────────
@@ -106,7 +205,7 @@ function loadDanceFromUrl(url) {
         url,
         (fbx) => {
             hideLoading();
-            onDanceLoaded(fbx);
+            onDanceLoaded(fbx, fileBaseName(url));
         },
         undefined,
         (err) => {
@@ -124,14 +223,24 @@ function loadDanceFromFile(file) {
     reader.onload = (e) => {
         const loader = new FBXLoader();
         const fbx = loader.parse(e.target.result, '');
-        onDanceLoaded(fbx);
+        onDanceLoaded(fbx, fileBaseName(file.name));
     };
     reader.readAsArrayBuffer(file);
 }
 
 // ── Handle a newly loaded dance FBX ─────────────────────────────────
-function onDanceLoaded(fbx) {
+function onDanceLoaded(fbx, name) {
     danceModel = fbx;
+    currentChoreo = null;
+    mocapChoreo = null;
+    beginNewDance(name);
+
+    // Record the rest pose now, before any animation touches the skeleton
+    try {
+        prepareRig(fbx);
+    } catch (err) {
+        console.warn('This FBX cannot perform choreographies:', err.message);
+    }
 
     // Extract animation clip
     if (fbx.animations && fbx.animations.length > 0) {
@@ -144,6 +253,170 @@ function onDanceLoaded(fbx) {
 
     // Display based on current rigging mode
     applyCurrentRigging();
+}
+
+// ── Make a choreography (from video or file) the current dance ──────
+async function setChoreography(choreo) {
+    // A choreography needs a body to perform it: fall back to the default character
+    if (!danceModel) {
+        danceModel = await fbxLoader.loadAsync(DEFAULT_FBX);
+        prepareRig(danceModel);
+    }
+    currentChoreo = choreo;
+    currentClip = null;
+    fbxPresetSelect.value = '';
+    beginNewDance(choreo.name);
+    applyCurrentRigging();
+}
+
+// ── Load a dance from a video: landmarks → joint rotations → choreography ──
+async function loadDanceFromVideo(file) {
+    if (videoJob) return;
+    videoJob = new AbortController();
+    transport.pause();
+    try {
+        showLoading('Loading pose model… (Esc to cancel)');
+        const capture = await extractPoseFromVideo(file, {
+            signal: videoJob.signal,
+            onProgress: ({ stage, fraction }) => {
+                showLoading(`${stage}… ${Math.round(fraction * 100)}% (Esc to cancel)`);
+            },
+        });
+        showLoading('Solving joint rotations…');
+        await new Promise((resolve) => setTimeout(resolve, 0)); // let the message paint
+        const choreo = solveChoreography(capture);
+        await setChoreography(choreo);
+        setVideoReference({ url: URL.createObjectURL(file), capture });
+
+        // Use the video's own soundtrack when it has one
+        try {
+            await transport.loadAudio(file);
+            audioFromVideo = true;
+        } catch (_) {
+            // Silent video (or undecodable audio): keep whatever audio is already loaded
+        }
+        transport.seek(0);
+        transport.play();
+
+        const missed = capture.frameCount - choreo.source.detectedFrames;
+        if (missed > capture.frameCount * 0.2) {
+            showMessage(`No dancer was found in ${missed} of ${capture.frameCount} frames — the motion there is interpolated.`);
+        } else {
+            hideLoading();
+        }
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            hideLoading();
+        } else {
+            console.error('Error analysing video:', err);
+            showMessage(`Could not learn a dance from this video: ${err.message}`);
+        }
+        if (!transport.hasAnimation && danceModel) applyCurrentRigging();
+    } finally {
+        videoJob = null;
+    }
+}
+
+// ── Load a saved choreography (.json) ───────────────────────────────
+async function loadChoreographyFromFile(file) {
+    try {
+        const choreo = Choreography.fromJSON(await file.text());
+        await setChoreography(choreo);
+    } catch (err) {
+        console.error('Error loading choreography:', err);
+        showMessage(`Could not load choreography: ${err.message}`);
+    }
+}
+
+// ── Save the current dance as a character-independent choreography ──
+function saveChoreography() {
+    let choreo = currentChoreo;
+    try {
+        if (!choreo) choreo = getMocapChoreography();
+    } catch (err) {
+        showMessage(err.message, 3000);
+        return;
+    }
+    const blob = new Blob([JSON.stringify(choreo)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${fileBaseName(choreo.name)}.choreo.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+// ── Pick the right loader for a dropped/selected dance file ─────────
+function loadDanceFile(file) {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.fbx')) {
+        loadDanceFromFile(file);
+    } else if (name.endsWith('.json')) {
+        loadChoreographyFromFile(file);
+    } else if (file.type.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogv)$/.test(name)) {
+        loadDanceFromVideo(file);
+    } else {
+        showMessage('Unsupported file. Choose an FBX, a video, or a choreography .json.');
+    }
+}
+
+// ── Reference video panel (the source video with tracked landmarks) ─
+function setVideoReference(ref) {
+    if (videoReference) URL.revokeObjectURL(videoReference.url);
+    videoReference = ref;
+    if (!ref) {
+        videoPanel.style.display = 'none';
+        refVideo.pause();
+        refVideo.removeAttribute('src');
+        refVideo.load();
+        return;
+    }
+    refVideo.src = ref.url;
+    refVideo.playbackRate = transport.speed;
+    refOverlay.width = ref.capture.width;
+    refOverlay.height = ref.capture.height;
+    videoPanel.style.display = 'block';
+}
+
+// Where the reference video should be for a given transport time (it loops with the dance)
+function referenceTime(t) {
+    const d = videoReference.capture.duration;
+    return d > 0 && t >= d ? (transport.duration <= d + 1e-6 ? d : t % d) : t;
+}
+
+function syncReferenceVideo(force) {
+    if (!videoReference) return;
+    const target = referenceTime(transport.currentTime);
+    if (force || Math.abs(refVideo.currentTime - target) > 0.1) refVideo.currentTime = target;
+    if (transport.playing && refVideo.paused) refVideo.play().catch(() => {});
+    if (!transport.playing && !refVideo.paused) refVideo.pause();
+}
+
+// Draw the tracked stick figure for the frame the reference video is showing
+function drawReferenceOverlay() {
+    if (!videoReference) return;
+    const { capture } = videoReference;
+    const ctx = refOverlay.getContext('2d');
+    ctx.clearRect(0, 0, refOverlay.width, refOverlay.height);
+    const frame = Math.max(0, Math.min(capture.frameCount - 1, Math.floor(refVideo.currentTime * capture.fps)));
+    const lm = capture.image[frame];
+    if (!lm) return;
+    const px = (i) => [lm[i * 4] * capture.width, lm[i * 4 + 1] * capture.height];
+    const unit = Math.max(capture.width, capture.height) / 160;
+    ctx.lineWidth = unit;
+    ctx.strokeStyle = '#00d9ff';
+    ctx.beginPath();
+    for (const [a, b] of LANDMARK_BONES) {
+        ctx.moveTo(...px(a));
+        ctx.lineTo(...px(b));
+    }
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    for (let i = 11; i < LANDMARK_COUNT; i++) {
+        const [x, y] = px(i);
+        ctx.beginPath();
+        ctx.arc(x, y, unit * 0.9, 0, Math.PI * 2);
+        ctx.fill();
+    }
 }
 
 // ── Apply the current rigging mode ──────────────────────────────────
@@ -248,23 +521,23 @@ function displayRiggingWithAnimation(sourceModel) {
 
     // Scale GLB models to match Mixamo scale (GLB is meters, Mixamo FBX is cm)
     // Detect by checking bounding box — if model is < 10 units tall, scale up
-    const box = new THREE.Box3().setFromObject(cloned);
+    const box = modelBounds(cloned);
     const height = box.max.y - box.min.y;
     if (height < 10) {
         cloned.scale.setScalar(100); // meters → centimeters
     }
 
+    // Record the rest pose (after scaling) so choreographies can be baked for this rig
+    try {
+        prepareRig(cloned);
+    } catch (err) {
+        console.warn('Rigging cannot perform choreographies:', err.message);
+    }
+
     displayModel(cloned, false);
 
     // Apply the current dance animation to this rigging
-    if (currentClip) {
-        const mixer = new THREE.AnimationMixer(model);
-        const action = mixer.clipAction(currentClip);
-        action.play();
-
-        transport.setAnimation(mixer, action, currentClip.duration);
-        transport.play();
-    }
+    startAnimation(model);
 }
 
 // ── Display a model in the scene ────────────────────────────────────
@@ -299,19 +572,14 @@ function displayModel(targetModel, hideAllMeshes) {
     frameCameraOnModel(model);
 
     // If using the dance model directly (skeleton/default mode), set up animation
-    if (targetModel === danceModel && currentClip) {
-        const mixer = new THREE.AnimationMixer(model);
-        const action = mixer.clipAction(currentClip);
-        action.play();
-
-        transport.setAnimation(mixer, action, currentClip.duration);
-        transport.play();
+    if (targetModel === danceModel) {
+        startAnimation(model);
     }
 }
 
 // ── Frame camera on a model ─────────────────────────────────────────
 function frameCameraOnModel(targetModel) {
-    const box = new THREE.Box3().setFromObject(targetModel);
+    const box = modelBounds(targetModel);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     modelCenter.copy(center);
@@ -383,11 +651,15 @@ let isScrubbing = false;
 
 transport.on('play', () => {
     playPauseButton.textContent = 'Pause';
+    syncReferenceVideo(true);
 });
 
 transport.on('pause', () => {
     playPauseButton.textContent = 'Play';
+    syncReferenceVideo(true);
 });
+
+transport.on('seek', () => syncReferenceVideo(true));
 
 transport.on('ended', () => {
     playPauseButton.textContent = 'Play';
@@ -396,6 +668,7 @@ transport.on('ended', () => {
 transport.on('speedchange', ({ speed }) => {
     speedValue.textContent = `${speed.toFixed(2)}x`;
     speedSlider.value = speed;
+    refVideo.playbackRate = speed;
 });
 
 transport.on('timeupdate', ({ currentTime, duration }) => {
@@ -405,6 +678,7 @@ transport.on('timeupdate', ({ currentTime, duration }) => {
             scrubber.value = currentTime / duration;
         }
     }
+    syncReferenceVideo(false);
 });
 
 transport.on('durationchange', ({ duration }) => {
@@ -460,12 +734,20 @@ fbxPresetSelect.addEventListener('change', (e) => {
     }
 });
 
-// Load FBX button → trigger hidden file input
+// Load Dance button → trigger hidden file input (FBX, video, or choreography JSON)
 loadFbxButton.addEventListener('click', () => fbxFileInput.click());
 fbxFileInput.addEventListener('change', (e) => {
     const file = e.target.files[0];
-    if (file) loadDanceFromFile(file);
+    if (file) loadDanceFile(file);
     fbxFileInput.value = '';
+});
+
+// Save the current dance as a reusable choreography file
+saveChoreoButton.addEventListener('click', saveChoreography);
+
+// Esc cancels a video analysis in progress
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && videoJob) videoJob.abort();
 });
 
 // Load Audio button → trigger hidden file input
@@ -474,6 +756,7 @@ audioFileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (file) {
         await transport.loadAudio(file);
+        audioFromVideo = false;
     }
     audioFileInput.value = '';
 });
@@ -496,9 +779,6 @@ riggingSelect.addEventListener('change', (e) => {
             showSkeleton = true;
             skeletonToggle.checked = true;
             displayModel(danceModel, true);
-            if (currentClip) {
-                // Animation is set up in displayModel
-            }
         }
     } else if (value === 'default') {
         // Show mesh from dance model
@@ -550,6 +830,7 @@ function animate() {
 
     const delta = clock.getDelta();
     transport.tick(delta);
+    drawReferenceOverlay();
     controls.update();
     renderer.render(scene, camera);
 }
@@ -560,4 +841,4 @@ animate();
 loadDanceFromUrl(DEFAULT_FBX);
 fbxPresetSelect.value = DEFAULT_FBX;
 
-console.log('AutoChoreo initialized (with rigging selection)');
+console.log('AutoChoreo initialized');
