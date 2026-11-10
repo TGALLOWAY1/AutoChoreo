@@ -24,6 +24,7 @@ export class TransportController {
         // Animation state
         this._mixer = null;
         this._action = null;
+        this._clipDuration = 0;
     }
 
     // ── Event system ─────────────────────────────────────────────────
@@ -49,11 +50,32 @@ export class TransportController {
     setAnimation(mixer, action, duration) {
         this._mixer = mixer;
         this._action = action;
-        this.duration = Math.max(this.duration, duration);
+        this._clipDuration = action ? duration : 0;
         if (action) {
-            action.setEffectiveTimeScale(this.speed);
+            // The transport drives the action's time directly (see _syncAnimation),
+            // so the action itself never advances on its own.
+            action.paused = false;
+            action.setEffectiveTimeScale(0);
+            // Audio, when loaded, is the master timeline; otherwise the dance is.
+            this.duration = this._audioBuffer ? this._audioBuffer.duration : duration;
+            if (this.currentTime > this.duration) this.seek(0);
+            this._syncAnimation();
+            this._emit('durationchange', { duration: this.duration });
         }
-        this._emit('durationchange', { duration: this.duration });
+    }
+
+    // Pose the animation at the transport's current time. A dance shorter than
+    // the master timeline (e.g. a long audio track) loops.
+    _syncAnimation() {
+        if (!this._mixer || !this._action) return;
+        const clip = this._clipDuration;
+        let t = Math.max(0, this.currentTime);
+        if (clip > 0 && t >= clip) {
+            // Hold the final pose when the dance itself is the whole timeline; otherwise loop
+            t = this.duration <= clip + 1e-6 ? clip : t % clip;
+        }
+        this._action.time = t;
+        this._mixer.update(0);
     }
 
     // ── Audio binding ────────────────────────────────────────────────
@@ -71,6 +93,7 @@ export class TransportController {
 
         // Audio duration becomes the master duration
         this.duration = this._audioBuffer.duration;
+        if (this.currentTime > this.duration) this.seek(0);
         this._emit('durationchange', { duration: this.duration });
         this._emit('audioloaded', { name: file.name, duration: this._audioBuffer.duration });
 
@@ -78,6 +101,19 @@ export class TransportController {
         if (this.playing) {
             this._startAudioSource(this.currentTime);
         }
+    }
+
+    /** Remove the loaded audio; the dance becomes the master timeline again. */
+    clearAudio() {
+        this._stopAudioSource();
+        this._audioBuffer = null;
+        this._audioTrackName = null;
+        if (this._action) {
+            this.duration = this._clipDuration;
+            if (this.currentTime > this.duration) this.seek(0);
+            this._emit('durationchange', { duration: this.duration });
+        }
+        this._emit('audioloaded', { name: '', duration: 0 });
     }
 
     _startAudioSource(offset) {
@@ -111,6 +147,8 @@ export class TransportController {
 
     play() {
         if (this.playing) return;
+        // Pressing play at the end starts over
+        if (this.duration > 0 && this.currentTime >= this.duration) this.seek(0);
         this.playing = true;
 
         // Resume audio context if suspended (browser autoplay policy)
@@ -118,9 +156,6 @@ export class TransportController {
             this._audioCtx.resume();
         }
 
-        if (this._action) {
-            this._action.paused = false;
-        }
         this._startAudioSource(this.currentTime);
 
         this._emit('play', { currentTime: this.currentTime });
@@ -134,10 +169,6 @@ export class TransportController {
         this._updateCurrentTimeFromAudio();
         this._stopAudioSource();
 
-        if (this._action) {
-            this._action.paused = true;
-        }
-
         this._emit('pause', { currentTime: this.currentTime });
     }
 
@@ -150,10 +181,13 @@ export class TransportController {
     }
 
     setSpeed(speed) {
-        this.speed = speed;
-        if (this._action) {
-            this._action.setEffectiveTimeScale(speed);
+        // Re-anchor the audio clock so time already played at the old speed is kept
+        if (this._sourceNode && this._audioCtx) {
+            this._updateCurrentTimeFromAudio();
+            this._audioStartOffset = this.currentTime;
+            this._audioStartWhen = this._audioCtx.currentTime;
         }
+        this.speed = speed;
         if (this._sourceNode) {
             this._sourceNode.playbackRate.value = speed;
         }
@@ -165,15 +199,7 @@ export class TransportController {
         this.currentTime = time;
 
         // Seek animation
-        if (this._mixer && this._action) {
-            this._action.time = time;
-            this._mixer.setTime(time);
-            // After setTime, re-apply speed and paused state
-            this._action.setEffectiveTimeScale(this.speed);
-            if (!this.playing) {
-                this._action.paused = true;
-            }
-        }
+        this._syncAnimation();
 
         // Seek audio — restart source from new offset
         if (this.playing) {
@@ -190,11 +216,6 @@ export class TransportController {
     tick(delta) {
         if (!this.playing) return;
 
-        // Update mixer
-        if (this._mixer) {
-            this._mixer.update(delta);
-        }
-
         // Derive currentTime from audio (most accurate) or fallback to accumulation
         if (this._sourceNode && this._audioCtx) {
             this.currentTime = this._audioStartOffset +
@@ -204,8 +225,13 @@ export class TransportController {
         }
 
         // Clamp
-        if (this.currentTime >= this.duration) {
-            this.currentTime = this.duration;
+        const ended = this.currentTime >= this.duration;
+        if (ended) this.currentTime = this.duration;
+
+        // The animation follows the transport clock, so it can never drift from the audio
+        this._syncAnimation();
+
+        if (ended) {
             this.pause();
             this._emit('ended', {});
         }
