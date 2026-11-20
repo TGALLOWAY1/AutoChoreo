@@ -259,4 +259,9 @@ export class TransportController {
     get hasAnimation() {
         return this._action !== null;
     }
+
+    /** Time within the dance clip being shown (differs from currentTime when the dance loops). */
+    get animationTime() {
+        return this._action ? this._action.time : 0;
+    }
 }

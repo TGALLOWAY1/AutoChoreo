@@ -7,9 +7,13 @@ A static web app (index.html + ES modules, no build step) that:
   choreography file
 - Performs them on the mocap skeleton, its mesh, X-Bot, or a custom GLB/FBX rig
 - Plays audio in sync (Phase 1 below: transport, scrubber, speed, file pickers)
-- Has no beat detection or music-driven sync yet (Phases 2–3)
+- Stitches several dances into a **sequence** with smooth transitions and
+  rhythmic speed changes, on a manually set beat grid (see *Sequencing* below)
+- Has no automatic beat detection yet (Phase 2)
 
-All dependencies come from CDN (Three.js 0.160.0, MediaPipe Tasks Vision). No build system, no tests.
+All dependencies come from CDN (Three.js 0.160.0, MediaPipe Tasks Vision). No build
+system. The choreography modules have Node unit tests: `npm install && npm test`
+(`package.json` exists only for the tests; the app itself still needs no install).
 
 ---
 
@@ -41,7 +45,8 @@ mocap FBX ───────────────────────�
 - [x] Character switching without reprocessing (choreography is baked per rig)
 - [ ] Optimisation pass: joint limits, foot-contact constraints (no sliding), balance
 - [ ] Jumps (root height currently assumes the lowest foot is on the floor)
-- [ ] Editing: mirror, loop, blend, BPM re-timing (ties into Phase 3 below)
+- [x] Editing: loop, blend, BPM re-timing — see *Sequencing* below
+- [ ] Editing: mirror
 - [ ] Movement vocabulary: segment choreographies into reusable, tagged primitives
 - [ ] Video generation (Veo) → evaluate → reconstruct → store workflow
 - [ ] More character types (robot with joint limits, geometric, procedural)
@@ -55,6 +60,60 @@ depth travel track the original. Limbs are the weak point (depth is guessed from
 one camera), hands the weakest. Feeding the solver perfect landmarks gives ≈ 2°,
 so the remaining error is pose-estimation quality, not the solve — a stronger
 motion-reconstruction model can replace `poseExtractor.js` without touching the rest.
+
+---
+
+## Sequencing — smooth transitions between clips, rhythmic time changes
+
+Goal: string short clips (10–15 s dances, trimmed or looped) into one performance
+whose joins look like dancing rather than editing, and bend time in musical
+amounts (half time for a bar, a held hit) without falling off the beat.
+
+```
+song time ──► speed changes ──► sequence time ──► clips + joins ──► one Choreography ──► bakeClip ──► any rig
+              (in song beats)   (clips end to end)  (choreo/sequence.js)                (unchanged)
+```
+
+| Module | Role |
+|--------|------|
+| `choreo/pose.js` | Single poses: interpolated sampling (slerp between frames), blending, heading, a standing neutral pose, pose distance |
+| `choreo/sequence.js` | Sequence model, layout, root alignment, time warp, compile to a flat Choreography, pose matching, save/load |
+| `sequenceEditor.js` | Side panel (*Sequence* button) and the timeline strip above the scrubber |
+
+Design decisions:
+- **Compile, don't special-case playback.** A sequence is flattened into an ordinary
+  Choreography, so the transport, rig switching, *Save Choreo* and baking are untouched.
+  Edits re-compile and re-bake in place (playhead and camera kept).
+- **Joins are centred on the cut.** A crossfade starts half its length before the cut
+  and ends half after, reading the dances' own frames beyond the in/out points. So a
+  clip trimmed to 8 beats occupies exactly 8 beats, whatever the join.
+- **Join styles:** *Crossfade* (both dances play while one fades into the other),
+  *Via neutral pose* (ease into a shared pose — standing by default, or captured
+  from the screen — and out of it), *Cut*.
+- **Root alignment:** each clip starts where the previous one left off (optionally
+  turned to face the same way), so the dancer never teleports.
+- **Speed changes are rhythmic:** defined in song beats (bar, beat, length), with
+  speeds like ½×, 2×, 0× (hold). Ramps are centred on the boundary and antisymmetric,
+  so they add exactly what a hard switch would. Everything after a change shifts by
+  `beats × (1 − speed)`, which the editor shows, and warns when it is not whole.
+- **Tempo matching per clip:** an optional "Dance BPM" plays a clip at
+  `song BPM / dance BPM` so its own beats land on the song's.
+- **Match pose / Match loop** pick in/out points where the poses (and motion) already
+  agree — a simple form of motion-graph transition search. With a dance BPM set,
+  only half-beat steps are considered so clips stay on the beat. *Snap to beats*
+  trims a clip to a whole number of beats.
+
+Measured on Mixamo clips (DancingMedium → DoTheRobot, 2-beat join): the largest
+single-frame joint rotation at the join is 77° for a cut, 14° for a crossfade and 17°
+via the neutral pose, against a 99th percentile of 16° inside the clips — i.e. the
+blended joins move no harder than the dance itself.
+
+### Next
+- [ ] Foot-contact-aware blending (feet can slide during a crossfade)
+- [ ] Beat grid from detected beats (Phase 2) instead of BPM + first downbeat
+- [ ] Drag clip edges / joins directly on the timeline strip
+- [ ] Mirror a clip; reverse playback
+- [ ] Keep the reference video panel in sync with video-learned clips in a sequence
 
 ---
 
@@ -133,6 +192,7 @@ motion-reconstruction model can replace `poseExtractor.js` without touching the 
 - This gives frame-accurate sync without changing overall duration much
 
 ### 3.3 Multi-Clip Sequencing
+- *Largely done by Sequencing above (clip list, transitions, per-clip tempo matching).*
 - Allow loading multiple FBX animations as a clip library (sidebar list)
 - User can drag clips onto a timeline track to sequence them
 - Each clip auto-crossfades into the next (configurable blend duration)

@@ -325,6 +325,176 @@
             text-shadow: 0 0 4px #000;
         }
 
+        /* ── Sequence editor panel ───────────────────────────── */
+
+        #sequencePanel {
+            display: none;
+            position: fixed;
+            top: 68px;
+            right: 8px;
+            bottom: 96px;
+            width: min(360px, calc(100vw - 16px));
+            overflow-y: auto;
+            background: rgba(10, 10, 26, 0.88);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            padding: 10px 12px 12px;
+            z-index: 1100;
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        #sequencePanel.open { display: block; }
+
+        #sequencePanel section {
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 8px 0 6px;
+        }
+
+        #sequencePanel h3 {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.5);
+            margin-bottom: 6px;
+        }
+
+        .seq-head, .seq-foot, .seq-row, .seq-clip-head {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .seq-head { padding-bottom: 8px; }
+        .seq-foot { border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px; }
+        .seq-row { margin: 4px 0; }
+        .seq-spacer { flex: 1; }
+
+        .seq-title {
+            flex: 1;
+            min-width: 0;
+            font-size: 14px;
+            font-weight: 600;
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 5px;
+            color: #fff;
+            padding: 3px 5px;
+        }
+
+        .seq-title:hover, .seq-title:focus { border-color: rgba(255, 255, 255, 0.2); outline: none; }
+
+        #sequencePanel label {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            white-space: nowrap;
+        }
+
+        #sequencePanel input[type="number"] {
+            width: 58px;
+            padding: 3px 4px;
+            font-size: 12px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 4px;
+            color: #fff;
+        }
+
+        .seq-select {
+            padding: 3px 4px;
+            font-size: 12px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 4px;
+            color: #fff;
+            max-width: 100%;
+        }
+
+        .seq-select option { background: #1a1a2e; color: #fff; }
+        .seq-select:disabled { opacity: 0.4; }
+
+        .seq-btn {
+            padding: 4px 8px;
+            font-size: 12px;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 5px;
+            color: #fff;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .seq-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.2); }
+        .seq-btn:disabled { opacity: 0.35; cursor: default; }
+        .seq-btn.primary { background: rgba(0, 217, 255, 0.25); border-color: rgba(0, 217, 255, 0.6); }
+        .seq-btn.icon { padding: 2px 6px; font-weight: 400; }
+        .seq-btn.small { padding: 2px 6px; font-size: 11px; }
+
+        .seq-check { white-space: normal !important; margin-bottom: 4px; }
+        .seq-hint { color: rgba(255, 255, 255, 0.45); font-size: 11px; line-height: 1.35; margin: 4px 0; }
+        .seq-info { color: rgba(255, 255, 255, 0.55); font-size: 11px; }
+        .seq-info.warn { color: #ffb347; }
+
+        .seq-clip {
+            border-left: 3px solid hsl(var(--hue), 70%, 50%);
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 6px;
+            padding: 6px 8px;
+            margin-top: 6px;
+        }
+
+        .seq-num {
+            font-weight: 700;
+            color: hsl(var(--hue), 80%, 65%);
+        }
+
+        .seq-name {
+            flex: 1;
+            min-width: 0;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .seq-join, .seq-speed {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin: 4px 0 0 10px;
+            padding: 5px 8px;
+            border: 1px dashed rgba(255, 255, 255, 0.18);
+            border-radius: 6px;
+        }
+
+        .seq-join.loop { margin-left: 0; }
+        .seq-speed { display: block; margin: 0 0 6px; border-style: solid; border-color: rgba(255, 170, 60, 0.35); }
+        .seq-join-label { width: 100%; color: rgba(255, 255, 255, 0.55); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        @keyframes seq-flash {
+            from { background: rgba(0, 217, 255, 0.35); }
+            to { background: transparent; }
+        }
+        .flash { animation: seq-flash 1.2s ease-out; }
+
+        /* ── Sequence timeline strip (above the scrubber) ─────── */
+
+        #sequenceStrip {
+            display: none;
+            position: fixed;
+            bottom: 50px;
+            height: 40px;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 4px;
+        }
+
         /* ── Canvas ──────────────────────────────────────────── */
 
         canvas {
@@ -388,6 +558,7 @@
         <button id="loadFbxButton" class="bar-btn" title="Load a dance: a mocap FBX, a video of a dancer, or a saved choreography (.json)">Load Dance</button>
         <button id="loadAudioButton" class="bar-btn">Load Audio</button>
         <button id="saveChoreoButton" class="bar-btn" title="Save the current dance as a character-independent choreography file">Save Choreo</button>
+        <button id="sequenceButton" class="bar-btn" title="Stitch several dances together with smooth transitions and rhythmic speed changes">Sequence</button>
 
         <label class="bones-toggle">
             <input type="checkbox" id="skeletonToggle" checked>
@@ -409,6 +580,10 @@
         <canvas id="refOverlay"></canvas>
         <span class="panel-label">Reference</span>
     </div>
+
+    <!-- Sequence editor (filled in by sequenceEditor.js) and its timeline strip -->
+    <div id="sequencePanel"></div>
+    <canvas id="sequenceStrip"></canvas>
 
     <!-- Loading overlay -->
     <div id="loadingOverlay">Loading rigging...</div>

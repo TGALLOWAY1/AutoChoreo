@@ -13,6 +13,9 @@ import { prepareRig, bakeClip, choreographyFromClip } from './choreo/retarget.js
 import { solveChoreography } from './choreo/solver.js';
 import { extractPoseFromVideo } from './choreo/poseExtractor.js';
 import { LANDMARK_BONES, LANDMARK_COUNT } from './choreo/skeleton.js';
+import { capturePose } from './choreo/pose.js';
+import { isSequenceJSON, sequenceFromJSON } from './choreo/sequence.js';
+import { SequenceEditor } from './sequenceEditor.js';
 
 // ── Default FBX to load on startup ──────────────────────────────────
 const DEFAULT_FBX = './TEST_DATA/DancingMedium_mixamo.fbx';
@@ -50,6 +53,9 @@ const trackName        = document.getElementById('trackName');
 const scrubber         = document.getElementById('scrubber');
 const timeDisplay      = document.getElementById('timeDisplay');
 const loadingOverlay   = document.getElementById('loadingOverlay');
+const sequenceButton   = document.getElementById('sequenceButton');
+const sequencePanel    = document.getElementById('sequencePanel');
+const sequenceStrip    = document.getElementById('sequenceStrip');
 
 // ── Three.js scene setup ────────────────────────────────────────────
 const scene    = new THREE.Scene();
@@ -100,6 +106,8 @@ let audioFromVideo = false;  // The loaded audio is the soundtrack of a dance vi
 let videoJob = null;         // AbortController while a video is being analysed
 let riggingMode = 'skeleton'; // 'skeleton' | 'default' | preset key | 'custom'
 let showSkeleton = true;     // Skeleton overlay visibility
+let sequenceActive = false;  // The current dance is the compiled sequence from the editor
+let sequenceEditor = null;   // Created once the DOM and helpers below exist
 
 const riggingCache = new Map(); // url → THREE.Group (cached downloaded riggings)
 const fbxLoader = new FBXLoader();
@@ -188,6 +196,7 @@ function startAnimation(targetModel) {
 // Called whenever a different dance (from any source) becomes current
 function beginNewDance(name) {
     currentDanceName = name || 'dance';
+    setSequenceActive(false);
     setVideoReference(null);
     if (audioFromVideo) {
         transport.clearAudio();
@@ -268,12 +277,16 @@ function onDanceLoaded(fbx, name) {
 }
 
 // ── Make a choreography (from video or file) the current dance ──────
-async function setChoreography(choreo) {
-    // A choreography needs a body to perform it: fall back to the default character
+// A choreography needs a body to perform it: fall back to the default character
+async function ensureDanceModel() {
     if (!danceModel) {
         danceModel = await fbxLoader.loadAsync(DEFAULT_FBX);
         prepareRig(danceModel);
     }
+}
+
+async function setChoreography(choreo) {
+    await ensureDanceModel();
     currentChoreo = choreo;
     currentClip = null;
     fbxPresetSelect.value = '';
@@ -351,8 +364,14 @@ async function loadDanceFromVideo(file) {
 async function loadChoreographyFromFile(file) {
     supersedeVideoJob();
     try {
-        const choreo = Choreography.fromJSON(await file.text());
-        await setChoreography(choreo);
+        const data = JSON.parse(await file.text());
+        if (isSequenceJSON(data)) {
+            sequenceEditor.setSequence(sequenceFromJSON(data));
+            sequenceEditor.open();
+            sequenceEditor.play();
+            return;
+        }
+        await setChoreography(Choreography.fromJSON(data));
     } catch (err) {
         console.error('Error loading choreography:', err);
         showMessage(`Could not load choreography: ${err.message}`);
@@ -368,10 +387,14 @@ function saveChoreography() {
         showMessage(err.message, 3000);
         return;
     }
-    const blob = new Blob([JSON.stringify(choreo)], { type: 'application/json' });
+    downloadJSON(choreo, `${fileBaseName(choreo.name)}.choreo.json`);
+}
+
+function downloadJSON(data, filename) {
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `${fileBaseName(choreo.name)}.choreo.json`;
+    link.download = filename;
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
@@ -389,6 +412,117 @@ function loadDanceFile(file) {
         showMessage('Unsupported file. Choose an FBX, a video, or a choreography .json.');
     }
 }
+
+// ── Sequences: several dances stitched together on the song's beat grid ──
+// The editor (sequenceEditor.js) compiles a sequence into one choreography,
+// which is then performed like any other dance.
+
+function setSequenceActive(active) {
+    sequenceActive = active;
+    if (sequenceEditor) sequenceEditor.setActive(active);
+}
+
+// The dance on screen as a choreography, for adding it to a sequence
+function currentDanceChoreography() {
+    if (sequenceActive) {
+        throw new Error('The sequence itself is playing. Add a preset or a file, or load another dance first.');
+    }
+    if (currentChoreo) return { choreo: currentChoreo, name: currentDanceName };
+    return { choreo: getMocapChoreography(), name: currentDanceName };
+}
+
+function choreographyFromFbx(fbx, name) {
+    if (!fbx.animations || !fbx.animations.length) throw new Error('This FBX contains no animation');
+    prepareRig(fbx); // record its rest pose before anything animates it
+    return choreographyFromClip(fbx.animations[0], fbx, { name });
+}
+
+const presetChoreoCache = new Map(); // url → Promise<Choreography>
+function presetChoreography(url) {
+    if (!presetChoreoCache.has(url)) {
+        const job = fbxLoader.loadAsync(url).then((fbx) => choreographyFromFbx(fbx, fileBaseName(url)));
+        job.catch(() => presetChoreoCache.delete(url));
+        presetChoreoCache.set(url, job);
+    }
+    return presetChoreoCache.get(url);
+}
+
+// A dance file added straight to the sequence (it does not become the current dance)
+async function sequenceDanceFromFile(file) {
+    const lower = file.name.toLowerCase();
+    if (lower.endsWith('.fbx')) {
+        const fbx = new FBXLoader().parse(await file.arrayBuffer(), '');
+        return { choreo: choreographyFromFbx(fbx, fileBaseName(file.name)), name: fileBaseName(file.name) };
+    }
+    if (lower.endsWith('.json')) {
+        const data = JSON.parse(await file.text());
+        if (isSequenceJSON(data)) return { sequence: sequenceFromJSON(data) };
+        const choreo = Choreography.fromJSON(data);
+        return { choreo, name: choreo.name };
+    }
+    throw new Error('Choose an FBX or a choreography .json (learn video dances with Load Dance first).');
+}
+
+// Make the compiled sequence the current dance and play it from the top
+async function playSequence(compiled) {
+    supersedeVideoJob();
+    try {
+        await ensureDanceModel();
+    } catch (err) {
+        showMessage(`Could not load a character: ${err.message}`);
+        return;
+    }
+    currentChoreo = compiled.choreo;
+    currentClip = null;
+    mocapChoreo = null;
+    fbxPresetSelect.value = '';
+    beginNewDance(compiled.choreo.name);
+    setSequenceActive(true);
+    applyCurrentRigging();
+}
+
+// An edit while the sequence plays: re-bake in place, keeping the playhead and the camera
+function updateSequence(compiled) {
+    if (!sequenceActive || !compiled) return;
+    currentChoreo = compiled.choreo;
+    if (!model) return;
+    let clip;
+    try {
+        clip = clipForModel(model);
+    } catch (err) {
+        console.error(err);
+        showMessage(err.message);
+        return;
+    }
+    const mixer = new THREE.AnimationMixer(model);
+    const action = mixer.clipAction(clip);
+    action.play();
+    transport.setAnimation(mixer, action, clip.duration);
+}
+
+sequenceEditor = new SequenceEditor({
+    panel: sequencePanel,
+    strip: sequenceStrip,
+    scrubber,
+    presets: Array.from(fbxPresetSelect.options).filter((o) => o.value).map((o) => [o.value, o.textContent]),
+    host: {
+        currentDance: currentDanceChoreography,
+        loadPresetDance: presetChoreography,
+        loadDanceFile: sequenceDanceFromFile,
+        play: playSequence,
+        update: updateSequence,
+        capturePose: () => {
+            const choreo = currentChoreo || getMocapChoreography();
+            return capturePose(choreo, transport.animationTime);
+        },
+        songTime: () => transport.currentTime,
+        duration: () => transport.duration,
+        seek: (t) => transport.seek(t),
+        download: downloadJSON,
+        message: (msg, ms) => showMessage(msg, ms),
+    },
+});
+sequenceButton.addEventListener('click', () => sequenceEditor.toggle());
 
 // ── Reference video panel (the source video with tracked landmarks) ─
 function setVideoReference(ref) {
@@ -862,6 +996,7 @@ function animate() {
     const delta = clock.getDelta();
     transport.tick(delta);
     drawReferenceOverlay();
+    if (sequenceActive) sequenceEditor.draw(transport.currentTime, transport.duration);
     controls.update();
     renderer.render(scene, camera);
 }

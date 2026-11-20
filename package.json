@@ -1,0 +1,12 @@
+{
+  "name": "autochoreo",
+  "private": true,
+  "type": "module",
+  "description": "The app itself has no build step (index.html loads dependencies from a CDN). This file only exists so the choreography modules can be unit-tested in Node.",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "three": "0.160.0"
+  }
+}
