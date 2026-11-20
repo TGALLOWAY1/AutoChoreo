@@ -295,7 +295,8 @@ export class SequenceEditor {
             this.compiled = null;
         }
         this._refreshInfo();
-        if (notify && this.compiled) this.host.update(this.compiled);
+        // null (an emptied or broken sequence) is reported too, so the host can stop the old performance
+        if (notify) this.host.update(this.compiled);
         return this.compiled;
     }
 

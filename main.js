@@ -483,7 +483,17 @@ async function playSequence(compiled) {
 
 // An edit while the sequence plays: re-bake in place, keeping the playhead and the camera
 function updateSequence(compiled) {
-    if (!sequenceActive || !compiled) return;
+    if (!sequenceActive) return;
+    if (!compiled) {
+        // The sequence was emptied (or can no longer be built): stop performing the
+        // stale version. The character stays on screen, holding where it stopped.
+        transport.pause();
+        currentChoreo = null;
+        setSequenceActive(false);
+        if (danceModel) applyCurrentRigging();
+        transport.seek(0);
+        return;
+    }
     currentChoreo = compiled.choreo;
     if (!model) return;
     let clip;

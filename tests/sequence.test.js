@@ -198,3 +198,14 @@ test('an empty sequence compiles to nothing', () => {
     assert.equal(compileSequence(createSequence()), null);
     assert.ok(createPose());
 });
+
+test('a ramped speed change on the very first beat still shifts later material by whole beats', () => {
+    // 60 BPM: 1 beat = 1 s. A 4-beat hold from beat 0 with a 1-beat ramp must delay what follows by exactly 4 s.
+    const seq = createSequence({ tempo: { bpm: 60 } });
+    seq.clips.push(createClip(makeDance('a', 6), { out: 4 }));
+    seq.clips.push(createClip(makeDance('b', 6), { out: 2 }));
+    seq.speedChanges.push(createSpeedChange({ startBeat: 0, beats: 4, speed: 0, rampBeats: 1 }));
+    const { timeline } = compileSequence(seq);
+    near(timeline.clips[1].start, 8, 2e-3, 'clip b starts 4 beats late');
+    near(timeline.duration, 10, 2e-3);
+});

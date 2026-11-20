@@ -245,7 +245,11 @@ function buildWarp(seq, length, step) {
         const a = Math.max(0, Number(c.startBeat) || 0) * beat;
         const b = a + Math.max(0, Number(c.beats) || 0) * beat;
         const r = Math.min(Math.max(0, Number(c.rampBeats) || 0) * beat, b - a);
-        return { id: c.id, a, b, r, speed: Math.max(0, Number(c.speed) || 0) };
+        // A ramp-in may not reach back before the song starts (time 0): the part
+        // before 0 would never be integrated and the shift would stop being whole beats.
+        // Narrowing it keeps it centred on its beat, so it still adds what a hard step would.
+        const rIn = Math.min(r, 2 * a);
+        return { id: c.id, a, b, rIn, rOut: r, speed: Math.max(0, Number(c.speed) || 0) };
     }).filter((c) => c.b > c.a);
     // Smooth 0 → 1 step centred on `at`, `r` wide (a hard step when r = 0).
     // Centred and antisymmetric, so it adds exactly what a hard step would:
@@ -253,7 +257,7 @@ function buildWarp(seq, length, step) {
     const rise = (t, at, r) => (r > 0 ? smoothstep((t - at + r / 2) / r) : (t >= at ? 1 : 0));
     const speedAt = (t) => {
         let v = 1;
-        for (const c of changes) v += (c.speed - 1) * (rise(t, c.a, c.r) - rise(t, c.b, c.r));
+        for (const c of changes) v += (c.speed - 1) * (rise(t, c.a, c.rIn) - rise(t, c.b, c.rOut));
         return Math.max(0, v);
     };
 
