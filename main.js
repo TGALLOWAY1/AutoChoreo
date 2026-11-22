@@ -16,6 +16,7 @@ import { LANDMARK_BONES, LANDMARK_COUNT } from './choreo/skeleton.js';
 import { capturePose } from './choreo/pose.js';
 import { isSequenceJSON, sequenceFromJSON } from './choreo/sequence.js';
 import { SequenceEditor } from './sequenceEditor.js';
+import { addRoutine, PRESETS } from './learn/library.js';
 
 // ── Default FBX to load on startup ──────────────────────────────────
 const DEFAULT_FBX = './TEST_DATA/DancingMedium_mixamo.fbx';
@@ -56,6 +57,7 @@ const loadingOverlay   = document.getElementById('loadingOverlay');
 const sequenceButton   = document.getElementById('sequenceButton');
 const sequencePanel    = document.getElementById('sequencePanel');
 const sequenceStrip    = document.getElementById('sequenceStrip');
+const practiceButton   = document.getElementById('practiceButton');
 
 // ── Three.js scene setup ────────────────────────────────────────────
 const scene    = new THREE.Scene();
@@ -108,6 +110,8 @@ let riggingMode = 'skeleton'; // 'skeleton' | 'default' | preset key | 'custom'
 let showSkeleton = true;     // Skeleton overlay visibility
 let sequenceActive = false;  // The current dance is the compiled sequence from the editor
 let sequenceEditor = null;   // Created once the DOM and helpers below exist
+let audioFile = null;        // The music file loaded with Load Audio (kept for practice)
+let videoFile = null;        // The video the current dance was learned from (kept for practice)
 
 const riggingCache = new Map(); // url → THREE.Group (cached downloaded riggings)
 const fbxLoader = new FBXLoader();
@@ -321,6 +325,7 @@ async function loadDanceFromVideo(file) {
         await setChoreography(choreo);
         checkCurrent();
         setVideoReference({ url: URL.createObjectURL(file), capture });
+        videoFile = file;
 
         // Use the video's own soundtrack when it has one
         try {
@@ -377,6 +382,44 @@ async function loadChoreographyFromFile(file) {
         showMessage(`Could not load choreography: ${err.message}`);
     }
 }
+
+// ── Practice: hand the current dance to the learning side ──────────
+// A preset dance is already in the library; anything else (a video-learned
+// dance, an imported file, a sequence) is added with its music, video and
+// landmarks, then opened in the Practice Studio.
+async function practiceCurrentDance() {
+    const presetUrl = !currentChoreo && !sequenceActive && !transport.hasAudio ? fbxPresetSelect.value : '';
+    const preset = presetUrl && PRESETS.find((p) => presetUrl.endsWith(p.file));
+    if (preset) {
+        location.href = `practice.html?routine=${encodeURIComponent(`preset:${preset.file.replace(/_mixamo\.fbx$|\.fbx$/i, '')}`)}`;
+        return;
+    }
+    let choreo;
+    try {
+        choreo = currentChoreo || getMocapChoreography();
+    } catch (err) {
+        showMessage(err.message, 3000);
+        return;
+    }
+    showLoading('Adding this dance to your library…');
+    try {
+        const music = transport.hasAudio ? (audioFromVideo ? videoFile : audioFile) : null;
+        const meta = await addRoutine({
+            choreo,
+            name: currentDanceName,
+            music,
+            musicName: music ? transport.audioTrackName : null,
+            video: videoReference ? videoFile : null,
+            capture: videoReference ? videoReference.capture : null,
+            sequenceTempo: sequenceActive ? { bpm: sequenceEditor.seq.tempo.bpm, offset: sequenceEditor.seq.tempo.offset } : null,
+        });
+        location.href = `practice.html?routine=${encodeURIComponent(meta.id)}`;
+    } catch (err) {
+        console.error(err);
+        showMessage(`Could not add the dance to your library: ${err.message}`);
+    }
+}
+practiceButton.addEventListener('click', practiceCurrentDance);
 
 // ── Save the current dance as a character-independent choreography ──
 function saveChoreography() {
@@ -932,6 +975,7 @@ audioFileInput.addEventListener('change', async (e) => {
     if (file) {
         await transport.loadAudio(file);
         audioFromVideo = false;
+        audioFile = file;
     }
     audioFileInput.value = '';
 });

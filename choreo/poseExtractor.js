@@ -39,11 +39,34 @@ function loadVision() {
 }
 
 /**
- * Create a landmarker on the requested delegate ("GPU" or "CPU").
- * Returns { landmarker, delegate } — the delegate may be CPU if GPU could not start.
+ * Is WebGL running on a software renderer (no usable GPU, or a blocklisted
+ * driver)? Then the model's "GPU" path is emulated on the CPU and is several
+ * times slower than its CPU path (measured: ~300 ms vs ~40 ms per frame).
  */
-async function createLandmarker(model, delegate) {
+let softwareGl = null;
+export function softwareRendering() {
+    if (softwareGl === null) {
+        softwareGl = false;
+        try {
+            const gl = document.createElement('canvas').getContext('webgl');
+            const info = gl && gl.getExtension('WEBGL_debug_renderer_info');
+            const renderer = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : '';
+            softwareGl = /swiftshader|llvmpipe|softpipe|software|basic render/i.test(String(renderer));
+            gl?.getExtension('WEBGL_lose_context')?.loseContext();
+        } catch (_) { /* no WebGL at all: the GPU path will fail and fall back anyway */ }
+    }
+    return softwareGl;
+}
+
+/**
+ * Create a landmarker on the requested delegate ("GPU" or "CPU").
+ * Returns { landmarker, delegate } — the delegate may be CPU if GPU could not
+ * start, or if the GPU is only emulated in software.
+ * Also used for live camera tracking (./liveTracker.js).
+ */
+export async function createLandmarker(model, delegate) {
     const { vision, fileset } = await loadVision();
+    if (delegate === 'GPU' && softwareRendering()) delegate = 'CPU';
     const options = (delegate) => ({
         baseOptions: { modelAssetPath: POSE_MODELS[model] || POSE_MODELS.full, delegate },
         runningMode: 'VIDEO',

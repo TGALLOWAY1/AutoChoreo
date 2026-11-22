@@ -1,6 +1,12 @@
 // AutoChoreo — Transport Sync Engine
-// Single source of truth for playback state.
-// Animation mixer, audio, scrubber, and UI all subscribe to this controller.
+// Single source of truth for playback state: the musical timeline.
+// Music, the animation mixer, reference / recording videos, the scrubber and
+// the practice scorer all follow this one clock.
+//
+// Music plays through an <audio> element with pitch preservation, so slowing a
+// routine down to practise it keeps the song in its key (the browser
+// time-stretches it). The decoded AudioBuffer is kept as well, for waveforms
+// and rhythm analysis.
 
 export class TransportController {
     constructor() {
@@ -9,6 +15,8 @@ export class TransportController {
         this.speed = 1.0;
         this.currentTime = 0;
         this.duration = 0;
+        /** Optional practice range { start, end }: playback stops at its end ('rangeend'). */
+        this.range = null;
 
         // Subscribers keyed by event name
         this._listeners = {};
@@ -16,10 +24,11 @@ export class TransportController {
         // Audio state
         this._audioCtx = null;
         this._audioBuffer = null;
-        this._sourceNode = null;
-        this._audioStartOffset = 0; // where in the buffer we started
-        this._audioStartWhen = 0;   // audioCtx.currentTime when we started
+        this._media = null;         // HTMLAudioElement that plays the music
+        this._mediaUrl = null;
         this._audioTrackName = null;
+        this._anchorTime = 0;       // smooth clock: song time at …
+        this._anchorPerf = 0;       // … this performance.now()
 
         // Animation state
         this._mixer = null;
@@ -80,32 +89,40 @@ export class TransportController {
 
     // ── Audio binding ────────────────────────────────────────────────
 
-    async loadAudio(file) {
-        if (!this._audioCtx) {
-            this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        // Stop any current playback
-        this._stopAudioSource();
+    get audioContext() {
+        if (!this._audioCtx) this._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        return this._audioCtx;
+    }
 
+    /** Load music (an audio file, or a video whose soundtrack to use). Throws if it has no decodable audio. */
+    async loadAudio(file, name = file.name) {
         const arrayBuffer = await file.arrayBuffer();
-        this._audioBuffer = await this._audioCtx.decodeAudioData(arrayBuffer);
-        this._audioTrackName = file.name;
+        const buffer = await this.audioContext.decodeAudioData(arrayBuffer);
+
+        this._releaseMedia();
+        this._audioBuffer = buffer;
+        this._audioTrackName = name;
+        this._mediaUrl = URL.createObjectURL(file);
+        const media = new Audio();
+        media.preload = 'auto';
+        media.preservesPitch = true;
+        media.mozPreservesPitch = true;
+        media.webkitPreservesPitch = true;
+        media.src = this._mediaUrl;
+        this._media = media;
 
         // Audio duration becomes the master duration
-        this.duration = this._audioBuffer.duration;
+        this.duration = buffer.duration;
         if (this.currentTime > this.duration) this.seek(0);
         this._emit('durationchange', { duration: this.duration });
-        this._emit('audioloaded', { name: file.name, duration: this._audioBuffer.duration });
+        this._emit('audioloaded', { name, duration: buffer.duration });
 
-        // If already playing, start audio from current position
-        if (this.playing) {
-            this._startAudioSource(this.currentTime);
-        }
+        if (this.playing) this._startMedia(this.currentTime);
     }
 
     /** Remove the loaded audio; the dance becomes the master timeline again. */
     clearAudio() {
-        this._stopAudioSource();
+        this._releaseMedia();
         this._audioBuffer = null;
         this._audioTrackName = null;
         if (this._action) {
@@ -116,39 +133,49 @@ export class TransportController {
         this._emit('audioloaded', { name: '', duration: 0 });
     }
 
-    _startAudioSource(offset) {
-        if (!this._audioBuffer || !this._audioCtx) return;
-        this._stopAudioSource();
-
-        const source = this._audioCtx.createBufferSource();
-        source.buffer = this._audioBuffer;
-        source.playbackRate.value = this.speed;
-        source.connect(this._audioCtx.destination);
-        source.start(0, offset);
-        source.onended = () => {
-            if (this._sourceNode === source) {
-                this._sourceNode = null;
-            }
-        };
-
-        this._sourceNode = source;
-        this._audioStartOffset = offset;
-        this._audioStartWhen = this._audioCtx.currentTime;
+    _releaseMedia() {
+        if (this._media) {
+            this._media.pause();
+            this._media.removeAttribute('src');
+            this._media.load();
+            this._media = null;
+        }
+        if (this._mediaUrl) {
+            URL.revokeObjectURL(this._mediaUrl);
+            this._mediaUrl = null;
+        }
     }
 
-    _stopAudioSource() {
-        if (this._sourceNode) {
-            try { this._sourceNode.stop(); } catch (_) { /* already stopped */ }
-            this._sourceNode = null;
+    _anchor(time) {
+        this._anchorTime = time;
+        this._anchorPerf = performance.now();
+    }
+
+    _startMedia(offset) {
+        const media = this._media;
+        if (!media) return;
+        media.playbackRate = this.speed;
+        if (Math.abs(media.currentTime - offset) > 0.005) media.currentTime = offset;
+        const started = media.play();
+        if (started && started.catch) {
+            started.catch((err) => {
+                if (err.name === 'AbortError') return; // paused / seeked before it began
+                console.warn('Music could not start:', err);
+                this._emit('error', { message: `Music could not start (${err.message}). Click play again.` });
+                this.pause();
+            });
         }
+        this._anchor(offset);
     }
 
     // ── Transport controls ───────────────────────────────────────────
 
     play() {
         if (this.playing) return;
-        // Pressing play at the end starts over
-        if (this.duration > 0 && this.currentTime >= this.duration) this.seek(0);
+        // Pressing play at the end starts over (from the range start, if any)
+        const start = this.range ? this.range.start : 0;
+        const end = this.range ? this.range.end : this.duration;
+        if (this.duration > 0 && (this.currentTime >= end - 1e-3 || this.currentTime < start - 1e-3)) this.seek(start);
         this.playing = true;
 
         // Resume audio context if suspended (browser autoplay policy)
@@ -156,19 +183,19 @@ export class TransportController {
             this._audioCtx.resume();
         }
 
-        this._startAudioSource(this.currentTime);
-
+        this._startMedia(this.currentTime);
+        this._anchor(this.currentTime);
+        this._tickPerf = performance.now();
         this._emit('play', { currentTime: this.currentTime });
     }
 
     pause() {
         if (!this.playing) return;
         this.playing = false;
-
-        // Capture current audio position before stopping
-        this._updateCurrentTimeFromAudio();
-        this._stopAudioSource();
-
+        if (this._media) {
+            this._media.pause();
+            this.currentTime = Math.min(this._media.currentTime, this.range ? this.range.end : this.duration);
+        }
         this._emit('pause', { currentTime: this.currentTime });
     }
 
@@ -181,16 +208,9 @@ export class TransportController {
     }
 
     setSpeed(speed) {
-        // Re-anchor the audio clock so time already played at the old speed is kept
-        if (this._sourceNode && this._audioCtx) {
-            this._updateCurrentTimeFromAudio();
-            this._audioStartOffset = this.currentTime;
-            this._audioStartWhen = this._audioCtx.currentTime;
-        }
         this.speed = speed;
-        if (this._sourceNode) {
-            this._sourceNode.playbackRate.value = speed;
-        }
+        if (this._media) this._media.playbackRate = speed;
+        this._anchor(this.currentTime);
         this._emit('speedchange', { speed });
     }
 
@@ -201,49 +221,77 @@ export class TransportController {
         // Seek animation
         this._syncAnimation();
 
-        // Seek audio — restart source from new offset
-        if (this.playing) {
-            this._startAudioSource(time);
-        } else {
-            this._audioStartOffset = time;
-        }
+        if (this._media) this._media.currentTime = time;
+        this._anchor(time);
 
         this._emit('seek', { currentTime: time });
+    }
+
+    /** Limit playback to [start, end]; it stops (and emits 'rangeend') at the end. null clears it. */
+    setRange(range) {
+        this.range = range ? { start: Math.max(0, range.start), end: Math.min(range.end, this.duration || range.end) } : null;
+        this._emit('rangechange', { range: this.range });
     }
 
     // ── Tick — call every frame ──────────────────────────────────────
 
     tick(delta) {
         if (!this.playing) return;
+        this._tickPerf = performance.now();
 
-        // Derive currentTime from audio (most accurate) or fallback to accumulation
-        if (this._sourceNode && this._audioCtx) {
-            this.currentTime = this._audioStartOffset +
-                (this._audioCtx.currentTime - this._audioStartWhen) * this.speed;
+        const media = this._media;
+        if (media) {
+            // Follow the music. Its reported position can be coarse, so run a
+            // smooth clock that is steered toward it — never backwards, which
+            // would look like a seek to everything following the clock.
+            const predicted = this._anchorTime + ((performance.now() - this._anchorPerf) / 1000) * this.speed;
+            const actual = media.currentTime;
+            const diff = actual - predicted;
+            if (media.seeking || media.readyState < 3 || diff > 0.08) {
+                if (actual >= this.currentTime || media.seeking) this.currentTime = actual;
+            } else if (diff >= -0.08) {
+                this.currentTime = Math.max(this.currentTime, predicted + 0.15 * diff);
+            } // else: the music is still starting up — hold until it catches up
+            this._anchor(this.currentTime);
+            if (media.ended) this.currentTime = this.duration;
         } else {
             this.currentTime += delta * this.speed;
         }
 
         // Clamp
-        const ended = this.currentTime >= this.duration;
-        if (ended) this.currentTime = this.duration;
+        const end = this.range ? this.range.end : this.duration;
+        const ended = this.currentTime >= end;
+        if (ended) this.currentTime = end;
 
         // The animation follows the transport clock, so it can never drift from the audio
         this._syncAnimation();
 
         if (ended) {
             this.pause();
-            this._emit('ended', {});
+            this.currentTime = end;
+            this._emit(this.range ? 'rangeend' : 'ended', {});
         }
 
         this._emit('timeupdate', { currentTime: this.currentTime, duration: this.duration });
     }
 
-    _updateCurrentTimeFromAudio() {
-        if (this._sourceNode && this._audioCtx) {
-            this.currentTime = this._audioStartOffset +
-                (this._audioCtx.currentTime - this._audioStartWhen) * this.speed;
-        }
+    /**
+     * Song time at a moment given in performance.now() milliseconds (e.g. when
+     * a camera frame was captured), extrapolated from the running clock.
+     */
+    songTimeAt(perfMs) {
+        if (!this.playing) return this.currentTime;
+        // currentTime was set at the last tick, which may be a while ago when the
+        // page is busy (e.g. running the pose model): extrapolate from that moment.
+        const since = this._tickPerf != null ? this._tickPerf : performance.now();
+        return this.currentTime + ((perfMs - since) / 1000) * this.speed;
+    }
+
+    /** Seconds between the music leaving the browser and reaching the speakers (when the browser reports it). */
+    get outputLatency() {
+        const ctx = this._audioCtx;
+        if (!ctx) return 0;
+        return (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
     }
 
     // ── Getters ──────────────────────────────────────────────────────
@@ -254,6 +302,10 @@ export class TransportController {
 
     get hasAudio() {
         return this._audioBuffer !== null;
+    }
+
+    get audioBuffer() {
+        return this._audioBuffer;
     }
 
     get hasAnimation() {
