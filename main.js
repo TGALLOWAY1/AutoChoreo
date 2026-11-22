@@ -243,6 +243,7 @@ function loadDanceFromUrl(url) {
 function loadDanceFromFile(file) {
     supersedeVideoJob();
     teardownDisplay();
+    fbxPresetSelect.value = ''; // the dance on screen is no longer the selected preset
 
     const reader = new FileReader();
     reader.onload = (e) => {

@@ -243,6 +243,7 @@ $('steps').addEventListener('keydown', (e) => {
 function selectStep(key, { restoring = false } = {}) {
     const step = state.steps.find((s) => s.key === key) || state.steps[0];
     stopPass();
+    leaveDemo();
     leaveDrill();
     state.step = step;
     state.customRange = false;
@@ -258,6 +259,7 @@ function selectStep(key, { restoring = false } = {}) {
 
 function setCustomRange(range) {
     stopPass();
+    leaveDemo();
     leaveDrill();
     state.customRange = true;
     state.loop = true;
@@ -716,6 +718,7 @@ $('dismissToast').addEventListener('click', hideSyncToast);
 
 function startDrill(range) {
     stopPass();
+    leaveDemo();
     const returnTempo = state.drill ? state.drill.returnTempo : state.tempo;
     if (!state.drill) {
         state.drill = { returnRange: { ...state.range }, returnTempo, returnLoop: state.loop, returnStep: state.step.key, returnCustom: state.customRange };
@@ -830,6 +833,14 @@ $('watchSlowly').addEventListener('click', () => {
     transport.play();
     updatePlayButton();
 });
+
+/** Leave "watch slowly" early (another step, loop or drill was chosen): give back the tempo it borrowed. */
+function leaveDemo() {
+    if (!state.demo) return;
+    const { tempo } = state.demo;
+    state.demo = null;
+    setTempo(tempo);
+}
 
 function finishDemo() {
     const d = state.demo;
