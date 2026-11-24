@@ -2,18 +2,104 @@
 
 ## Current State
 
-A static web app (index.html + ES modules, no build step) that:
-- Loads dances from Mixamo FBX mocap, from a video of a dancer, or from a saved
-  choreography file
-- Performs them on the mocap skeleton, its mesh, X-Bot, or a custom GLB/FBX rig
-- Plays audio in sync (Phase 1 below: transport, scrubber, speed, file pickers)
-- Stitches several dances into a **sequence** with smooth transitions and
-  rhythmic speed changes, on a manually set beat grid (see *Sequencing* below)
-- Has no automatic beat detection yet (Phase 2)
+A static web app (HTML pages + ES modules, no build step) with three parts:
+
+- **Learning dashboard** (`index.html`) — the entry point: the choreography
+  library, upload → convert → practise, a preview of the selected routine, and
+  practice progress (see *Learning Track* below)
+- **Practice Studio** (`practice.html`) — learn a routine against a reference
+  with a live camera or an uploaded recording, scored on pose, timing and
+  movement, with adaptive drills and tempo
+- **Choreograph** (`choreograph.html`, formerly `index.html`) — the 3D viewer
+  and editor: loads dances from Mixamo FBX mocap, from a video of a dancer, or
+  from a saved choreography; performs them on any rig; stitches **sequences**
+  with smooth transitions and rhythmic speed changes. *Practice this* hands the
+  current dance to the learning side
+
+Music plays in sync with pitch preserved at any tempo. Tempo and count 1 are
+estimated from the music, or from the movement for dances without music
+(`choreo/rhythm.js`) — a foundation for Phase 2, not yet full beat tracking.
 
 All dependencies come from CDN (Three.js 0.160.0, MediaPipe Tasks Vision). No build
 system. The choreography modules have Node unit tests: `npm install && npm test`
 (`package.json` exists only for the tests; the app itself still needs no install).
+
+---
+
+## Learning Track — Dashboard and Practice Studio
+
+Goal: turn the choreography tools into a place to *learn* a dance: pick a routine,
+practise it alongside a reference, see objectively how close you are and what to
+fix, repeat the hard parts slower, and come back later to keep improving.
+
+```
+select routine ──► practise a step ──► compare (live / recording) ──► feedback ──► drill / adapt tempo ──► progress
+ dashboard.js       practice.js          choreo/compare.js             learn/feedback.js   learn/adaptive.js     learn/progress.js
+ learn/library.js   learn/lesson.js      choreo/scoring.js
+```
+
+| Module | Role |
+|--------|------|
+| `choreo/compare.js` | Pose comparison: both sides reduced to 15 keypoints → unit bone directions in the dancer's own body frame (+ torso lean and facing); reference tracks from a choreography (forward kinematics) or from a video's landmarks; front/back disambiguation; aligning a recording by movement |
+| `choreo/scoring.js` | `SyncScorer`: windowed lag search that separates *wrong movement* from *right movement at the wrong time*; movement-quality score; `AttemptAccumulator` per pass (per-count scores, per-body-part errors, mean lag) |
+| `choreo/rhythm.js` | Onset envelopes (spectral flux per band / movement stops), tempo by autocorrelation + comb refinement, count 1, sections of eight, aligning two recordings by their music |
+| `choreo/liveTracker.js` | MediaPipe Pose on every camera frame, stamped with its capture time |
+| `learn/library.js` | Routines: built-in mocap presets plus the dancer's imports (videos, choreography/sequence JSON, FBX) stored in IndexedDB with their video, landmarks and music; per-routine analysis (rhythm, thumbnail) |
+| `learn/lesson.js` | Lesson plan: watch → one step per eight → full routine |
+| `learn/adaptive.js` | Tempo ladder, losing-the-routine detector, drill phrase selection |
+| `learn/feedback.js` | Measurements → concrete corrections ("Raise your left elbow higher", "about ½ beat late", "counts 11–12 were your weakest") |
+| `learn/progress.js` | Attempts, per-step best scores and mastery, practice time, resume point, recommendations (localStorage) |
+| `learn/stage.js`, `timeline.js`, `metronome.js`, `overlay.js` | 3D reference with joint overlay, beat-grid timeline with draggable loop, metronome and "5, 6, 7, 8" count-in, skeleton overlays coloured by match |
+| `sync.js` | The one musical clock: music (pitch-preserving `<audio>`), animation, videos, metronome and scorer all follow it; practice ranges; capture-time → song-time |
+
+### How a performance is compared
+
+- **Normalisation.** Bone directions are unit vectors (proportions and size drop
+  out), differences of keypoints (position drops out), expressed in the dancer's
+  body frame built from the hip + shoulder lines and the torso (camera yaw, pitch
+  and roll drop out). Torso lean and facing are kept as features on purpose.
+  The forward-kinematics reference matches the posed rig's joints to within 1°.
+- **Emphasis.** Each body part counts by how far the reference takes it from a
+  neutral stance around that moment — otherwise someone standing still would
+  earn credit for every part the dance does not use.
+- **Pose vs timing.** The last 0.8 s of the dancer's movement is compared with
+  the reference shifted ±0.5 s. The best shift's match is the *pose* score; the
+  shift itself is the timing error (chosen on raw angle error, which has no
+  full-credit plateau). Timing is not judged while the reference holds still,
+  and earns no credit while the movement itself is wrong.
+- **Movement** compares how much each body part moves at each moment (speeds,
+  weighted by the reference's activity) — robust to the pose model's depth errors.
+- **Front/back.** From one camera the pose model regularly reads a dancer the
+  wrong way round (measured: 30–50% of frames on rendered test dancers). Each
+  frame is read the way round the reference faces at that moment — decided by
+  facing only, so using the wrong arm still shows as the wrong arm.
+- **Latency.** Camera frames are placed on the song timeline by their capture
+  time; the audio output latency (and a user setting for Bluetooth) is subtracted.
+- **Recordings** are placed on the timeline by their music when both have it
+  (with movement choosing between repeats of looped music), else by movement;
+  whether they were danced mirrored or same-side is detected.
+
+### Measured calibration (MediaPipe on rendered test dances)
+
+| Performance | Overall | Pose | Timing | Movement |
+|---|---|---|---|---|
+| Same dance, in time (recording) | 80–83 | 83–86 | 98 | 71–75 |
+| Same dance, in time (live camera, 15 fps) | 78–84 | 80–87 | 100 | 70–76 |
+| Same dance, 0.3 s late (live) | 66–68 | 83–86 | 29–37 | 71–74 |
+| Different dance | 47 | 53 | — | 61 |
+| Standing still | 43 | 54 | — | 48 |
+
+Live lag measurements: in time −0.01 beats; 0.3 s late → +0.27–0.30 s;
+0.25 s early → −0.14–0.21 s. MediaPipe's own error caps a flawless performance
+around the mid 80s (arms ~30° off on average), so mastery is set at 75.
+
+### Next
+- [ ] Movement-aware tempo/beat tracking for music with tempo changes (beats are assumed steady)
+- [ ] A volumetric default dancer: the bundled Mixamo mesh is a thin bone-display mannequin
+- [ ] Pose model in a Web Worker so tracking never competes with rendering
+- [ ] Per-user calibration of systematic pose-model bias (e.g. a short standing capture)
+- [ ] Record & compare: keep the camera take of a pass to replay beside the reference
+- [ ] Sync progress across devices (everything is stored in this browser today)
 
 ---
 
@@ -123,8 +209,9 @@ blended joins move no harder than the dance itself.
 - Add an `<input type="file" accept="audio/*">` to load an MP3/WAV/OGG file
 - Create a Web Audio API `AudioContext` and `AudioBufferSourceNode`
 - Wire Play/Pause to start/stop both animation and audio together
-- Wire the Speed slider to `AudioBufferSourceNode.playbackRate` so audio
-  pitch-shifts in lockstep with animation speed
+- Wire the Speed slider to the playback rate so audio follows the animation
+  speed — *now pitch-preserving: music plays through an `<audio>` element with
+  `preservesPitch`, the decoded buffer is kept for waveforms and analysis*
 - Display the loaded track name in the UI bar
 
 ### 1.2 FBX File Picker
@@ -152,6 +239,11 @@ blended joins move no harder than the dance itself.
 ## Phase 2 — Music Analysis & Beat Detection
 
 ### 2.1 Beat Detection via Web Audio API
+
+*Foundation implemented in `choreo/rhythm.js` (spectral flux, autocorrelation
+tempo, comb-refined tempo and phase; steady tempo assumed). Used by the
+learning track for counts and sections.*
+
 - Create an `AnalyserNode` fed from the audio source
 - Implement onset-detection in `beatDetector.js`:
   - Compute spectral flux from successive FFT frames

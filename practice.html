@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Practice — Auto Choreograph</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <link rel="stylesheet" href="learn/theme.css">
+    <link rel="stylesheet" href="learn/practice.css">
+</head>
+<body class="practice-page">
+    <header class="topbar">
+        <a class="brand" href="index.html"><span data-logo="30"></span><span class="name">Auto Choreograph</span></a>
+        <nav class="tabs" aria-label="Main">
+            <a href="index.html">Home</a>
+            <a href="practice.html" class="active" aria-current="page">Practice</a>
+            <a href="index.html#library">Library</a>
+            <a href="index.html#progress">Progress</a>
+            <a href="choreograph.html">Choreograph</a>
+        </nav>
+        <div class="top-actions">
+            <button id="settingsButton" class="btn icon ghost" data-icon="settings" title="Practice settings" aria-label="Practice settings"></button>
+        </div>
+    </header>
+
+    <main class="studio">
+        <!-- Lesson plan -->
+        <aside class="lesson card" aria-label="Lesson">
+            <div class="lesson-head">
+                <a href="index.html" class="btn icon ghost small" data-icon="back" aria-label="Back to dashboard"></a>
+                <h2>Lesson</h2>
+            </div>
+            <div class="routine-info">
+                <img id="routineThumb" alt="" class="thumb">
+                <div class="routine-text">
+                    <h3 id="routineName">Loading…</h3>
+                    <div id="routineMeta" class="muted"></div>
+                    <div id="rhythmInfo" class="rhythm-info"></div>
+                </div>
+            </div>
+            <ol id="steps" class="steps"></ol>
+        </aside>
+
+        <!-- Side-by-side views -->
+        <section class="views" aria-label="Reference and your performance">
+            <div class="view card" id="refView">
+                <div class="view-label"><span class="badge" data-icon="play"></span><div><b>Reference</b><small>Choreography</small></div></div>
+                <div class="view-tools">
+                    <div class="segmented" id="refSourceToggle" role="group" aria-label="Reference view">
+                        <button data-source="video" aria-pressed="false">Video</button>
+                        <button data-source="3d" aria-pressed="true">3D</button>
+                    </div>
+                    <div class="segmented" id="bodyToggle" role="group" aria-label="Reference body">
+                        <button data-mode="character" aria-pressed="true">Dancer</button>
+                        <button data-mode="skeleton" aria-pressed="false">Skeleton</button>
+                    </div>
+                </div>
+                <div class="view-media" id="refMedia">
+                    <div id="stageHost" class="stage-host"></div>
+                    <div id="refVideoWrap" class="video-wrap hidden">
+                        <video id="refVideo" muted playsinline preload="auto"></video>
+                        <canvas id="refOverlay" class="overlay"></canvas>
+                    </div>
+                </div>
+                <div class="view-foot"><span id="refClock" class="clock">0:00 / 0:00</span><span id="refTempo" class="chip">1.0×</span><span id="mirrorBadge" class="chip" title="How you follow the reference"></span></div>
+            </div>
+
+            <div class="link-badge" data-icon="link" title="Both views follow the same musical timeline"></div>
+
+            <div class="view card" id="userView">
+                <div class="view-label"><span class="badge cyan" data-icon="camera"></span><div><b>You</b><small id="userLabel">Choose an input</small></div></div>
+                <div class="view-media">
+                    <div class="video-wrap" id="userWrap">
+                        <video id="userVideo" muted playsinline preload="auto"></video>
+                        <canvas id="userOverlay" class="overlay"></canvas>
+                    </div>
+                    <div id="inputPicker" class="input-picker">
+                        <h3>How do you want to practise?</h3>
+                        <p>Your movement is compared with the reference on the same musical timeline.</p>
+                        <div class="input-options">
+                            <button class="input-option" id="useCamera"><span data-icon="camera"></span><b>Live camera</b><small>Real-time feedback as you dance</small></button>
+                            <button class="input-option" id="useRecording"><span data-icon="film"></span><b>Upload a recording</b><small>A video of you dancing this routine</small></button>
+                        </div>
+                        <button class="btn ghost small" id="justWatch">Just watch for now</button>
+                    </div>
+                    <div id="readyMeter" class="ready-meter hidden">
+                        <b>Get into the starting pose</b>
+                        <div class="bar"><span id="readyBar"></span></div>
+                        <small>Playback starts when you match it — or <button class="linkish" id="startNow">start now</button></small>
+                    </div>
+                    <div id="liveCue" class="live-cue hidden"></div>
+                </div>
+                <div class="view-foot">
+                    <span id="userClock" class="clock">0:00 / 0:00</span>
+                    <span id="inputStatus" class="input-status muted"></span>
+                    <span class="spacer"></span>
+                    <span id="alignTools" class="align-tools hidden">
+                        <button class="btn icon ghost small" data-nudge="-0.05" title="Your recording 50 ms earlier">−</button>
+                        <span id="alignLabel" class="muted"></span>
+                        <button class="btn icon ghost small" data-nudge="0.05" title="Your recording 50 ms later">+</button>
+                    </span>
+                    <button id="changeInput" class="btn small ghost hidden">Change input</button>
+                </div>
+            </div>
+            <div id="countIn" class="count-in hidden" aria-live="assertive"></div>
+        </section>
+
+        <!-- Scores and coaching -->
+        <aside class="side">
+            <section class="card sync" aria-label="Synchronization">
+                <div class="card-head"><h2>Synchronization</h2><span class="spacer"></span><span id="syncCaption" class="muted small-caps"></span></div>
+                <div class="sync-body">
+                    <div class="ring-wrap">
+                        <div id="syncRing"></div>
+                        <div class="ring-text"><b id="syncValue">—</b><small id="syncDelta"></small></div>
+                    </div>
+                    <div class="metrics">
+                        <div class="metric"><span data-icon="timer"></span><span class="name">Timing</span><b id="mTiming">—</b><div class="bar"><span id="bTiming"></span></div></div>
+                        <div class="metric"><span data-icon="pose"></span><span class="name">Pose match</span><b id="mPose">—</b><div class="bar"><span id="bPose"></span></div></div>
+                        <div class="metric"><span data-icon="motion"></span><span class="name">Movement</span><b id="mMotion">—</b><div class="bar"><span id="bMotion"></span></div></div>
+                        <div class="metric"><span data-icon="star"></span><span class="name">Overall</span><b id="mOverall">—</b><div class="bar"><span id="bOverall"></span></div></div>
+                    </div>
+                    <p id="lagReadout" class="lag-readout muted"></p>
+                </div>
+            </section>
+            <section class="card coach" aria-label="Coach">
+                <div class="card-head"><span class="icon accent" data-icon="sparkle"></span><h2>Coach</h2><span class="spacer"></span><span class="chip" title="Feedback is computed from the measured differences between your movement and the reference">Measured</span></div>
+                <div class="card-body">
+                    <div id="coachBody" class="coach-body"></div>
+                    <div class="coach-actions">
+                        <button class="btn primary small" id="watchSlowly"><span data-icon="play"></span>Watch slowly</button>
+                        <button class="btn outline small" id="drillWeak"><span data-icon="loop"></span>Drill weakest</button>
+                    </div>
+                </div>
+            </section>
+        </aside>
+
+        <!-- Timeline -->
+        <section class="timeline card" aria-label="Timeline">
+            <div class="track-info">
+                <img id="trackThumb" alt="" class="thumb small">
+                <div><b id="trackName"></b><small id="trackMeta" class="muted"></small></div>
+            </div>
+            <canvas id="timeline" aria-label="Routine timeline: click to jump, drag to loop a stretch"></canvas>
+            <div class="loop-label"><span data-icon="loop"></span><span id="loopLabel">—</span></div>
+        </section>
+
+        <div id="syncToast" class="sync-toast hidden" role="alert">
+            <span class="alert-icon" data-icon="alert"></span>
+            <span id="syncToastText"></span>
+            <button class="btn primary small" id="rewindPractice"><span data-icon="loop"></span>Rewind &amp; practice</button>
+            <button class="btn icon ghost small" id="dismissToast" data-icon="close" aria-label="Dismiss"></button>
+        </div>
+        <div id="drillBanner" class="drill-banner hidden">
+            <span data-icon="target"></span><span id="drillText"></span>
+            <button class="btn small ghost" id="exitDrill">Back to the routine</button>
+        </div>
+
+        <!-- Transport -->
+        <section class="transport card" aria-label="Playback">
+            <div class="tempo">
+                <span class="tempo-icon" data-icon="metronome"></span>
+                <div class="tempo-text"><b>Tempo</b><span id="bpmLabel">—</span></div>
+                <button class="btn icon" id="tempoDown" data-icon="minus" aria-label="Slower"></button>
+                <button class="btn icon" id="tempoUp" data-icon="plus" aria-label="Faster"></button>
+                <div class="segmented tempo-chips" id="tempoChips" role="group" aria-label="Tempo"></div>
+            </div>
+            <div class="playback">
+                <button class="btn lg skip" id="prevPhrase" aria-label="Back 4 counts"><span data-icon="prev"></span>4 cts</button>
+                <button class="play-button" id="playButton" aria-label="Play"></button>
+                <button class="btn lg skip" id="nextPhrase" aria-label="Forward 4 counts">4 cts<span data-icon="next"></span></button>
+            </div>
+            <div class="loop-controls">
+                <div class="loop-title"><span data-icon="loop"></span><b>Loop</b></div>
+                <div class="segmented" id="loopToggle" role="group" aria-label="Loop mode">
+                    <button data-loop="on" aria-pressed="true">A ↔ B</button>
+                    <button data-loop="full" aria-pressed="false">Full</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="loading" class="loading-screen"><div class="spinner"></div><p id="loadingText">Loading routine…</p></div>
+    <input type="file" id="recordingInput" accept="video/*" class="hidden">
+
+    <script type="module" src="practice.js"></script>
+</body>
+</html>
